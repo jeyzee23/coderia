@@ -150,7 +150,7 @@
             },
             {
               "name": "X-Title",
-              "value": "Healthcare AI Triage - Coderhouse"
+              "value": "Healthcare AI Triage - Local Dev"
             }
           ]
         },
@@ -458,7 +458,7 @@
   },
   "versionId": "2.0.0",
   "meta": {
-    "templateCreatedBy": "Juanca - Coderhouse AI Automation"
+    "templateCreatedBy": "Juanca - AI Automation"
   },
   "tags": [
     {

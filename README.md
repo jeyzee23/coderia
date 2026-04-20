@@ -1,6 +1,6 @@
 # Healthcare AI Triage — n8n + OpenRouter
 
-Actividad práctica de automatización con IA (Coderhouse). Workflow de **triage clínico preliminar** corriendo en n8n self-hosted que combina búsqueda semántica, análisis por LLM y una política de fallback determinista.
+Actividad práctica de automatización con IA. Workflow de **triage clínico preliminar** corriendo en n8n self-hosted que combina búsqueda semántica, análisis por LLM y una política de fallback determinista.
 
 > ⚠️ Proyecto educativo. No usar para decisiones clínicas reales.
 
