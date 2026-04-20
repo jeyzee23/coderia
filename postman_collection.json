@@ -1,0 +1,288 @@
+{
+  "info": {
+    "name": "Healthcare AI Triage - n8n Local",
+    "description": "Pruebas del workflow de triage clínico corriendo en n8n self-hosted (http://localhost:5678).\n\nDos carpetas:\n- **Producción**: pega a /webhook/... (requiere workflow Active). Corre en background, se ve en tab Executions.\n- **Test (canvas en vivo)**: pega a /webhook-test/... Requiere apretar 'Execute workflow' en el editor ANTES de cada request. Anima el canvas paso a paso.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "healthcare-triage-local-dev"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5678",
+      "type": "string"
+    },
+    {
+      "key": "webhookPath",
+      "value": "/webhook/patient-analysis",
+      "type": "string"
+    },
+    {
+      "key": "webhookPathTest",
+      "value": "/webhook-test/patient-analysis",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Producción (/webhook) — workflow Active",
+      "description": "Requiere el workflow activado (toggle arriba a la derecha). Corre en background, ver resultados en la tab Executions.",
+      "item": [
+        {
+          "name": "P1 — Crítico (vitales críticos + dolor torácico)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('priority P1_CRITICAL', () => pm.expect(b.triage.priority).to.eql('P1_CRITICAL'));",
+                  "pm.test('SLA 5 min', () => pm.expect(b.triage.slaMinutes).to.eql(5));",
+                  "pm.test('IA respondió (no fallback)', () => pm.expect(b.fallbackUsed).to.be.false);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPath}}", "host": ["{{baseUrl}}{{webhookPath}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-2024-001\",\n  \"age\": 67,\n  \"symptoms\": \"dolor toracico intenso opresivo con disnea e irradiacion a brazo izquierdo\",\n  \"vitals\": { \"bp\": \"180/110\", \"hr\": 115, \"spo2\": 91 }\n}"
+            }
+          }
+        },
+        {
+          "name": "P2 — Alta (cefalea de alarma)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('priority P2_HIGH o P1', () => pm.expect(['P1_CRITICAL','P2_HIGH']).to.include(b.triage.priority));",
+                  "pm.test('SLA <= 30 min', () => pm.expect(b.triage.slaMinutes).to.be.at.most(30));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPath}}", "host": ["{{baseUrl}}{{webhookPath}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-2024-002\",\n  \"age\": 54,\n  \"symptoms\": \"cefalea subita intensa thunderclap con vision borrosa y focalidad neurologica\",\n  \"vitals\": { \"bp\": \"160/95\", \"hr\": 88, \"spo2\": 97 }\n}"
+            }
+          }
+        },
+        {
+          "name": "P3 — Media (síntomas moderados)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('IA respondió (no fallback)', () => pm.expect(b.fallbackUsed).to.be.false);",
+                  "pm.test('priority existe', () => pm.expect(b.triage.priority).to.match(/^P[1-4]_/));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPath}}", "host": ["{{baseUrl}}{{webhookPath}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-2024-003\",\n  \"age\": 40,\n  \"symptoms\": \"dolor abdominal moderado con nauseas sin fiebre\",\n  \"vitals\": { \"bp\": \"125/80\", \"hr\": 85, \"spo2\": 98 }\n}"
+            }
+          }
+        },
+        {
+          "name": "P4 — Baja (consulta leve)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('priority P4_LOW', () => pm.expect(b.triage.priority).to.eql('P4_LOW'));",
+                  "pm.test('SLA 24 hs', () => pm.expect(b.triage.slaMinutes).to.eql(1440));",
+                  "pm.test('IA respondió (no fallback)', () => pm.expect(b.fallbackUsed).to.be.false);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPath}}", "host": ["{{baseUrl}}{{webhookPath}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-2024-004\",\n  \"age\": 32,\n  \"symptoms\": \"dolor de garganta leve, congestion nasal, sin fiebre\",\n  \"vitals\": { \"hr\": 72, \"spo2\": 98 }\n}"
+            }
+          }
+        },
+        {
+          "name": "Override — síntomas leves + vitales críticos (debe escalar)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('Override aplicado', () => pm.expect(b.triage.overrideApplied).to.be.true);",
+                  "pm.test('priority al menos P2', () => pm.expect(['P1_CRITICAL','P2_HIGH']).to.include(b.triage.priority));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPath}}", "host": ["{{baseUrl}}{{webhookPath}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-2024-005\",\n  \"age\": 28,\n  \"symptoms\": \"me siento un poco cansado\",\n  \"vitals\": { \"bp\": \"185/100\", \"hr\": 118, \"spo2\": 90 }\n}"
+            }
+          }
+        },
+        {
+          "name": "Error — input inválido (falta symptoms)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                  "const b = pm.response.json();",
+                  "pm.test('mensaje de error presente', () => pm.expect(b.error).to.include('symptoms'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPath}}", "host": ["{{baseUrl}}{{webhookPath}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-2024-006\",\n  \"age\": 50\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Test (/webhook-test) — anima canvas",
+      "description": "ANTES de cada request, hacé click en 'Execute workflow' en el editor de n8n. Escucha un solo request por click y anima el canvas nodo por nodo.",
+      "item": [
+        {
+          "name": "P1 — Crítico (vitales críticos + dolor torácico)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPathTest}}", "host": ["{{baseUrl}}{{webhookPathTest}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-2024-001\",\n  \"age\": 67,\n  \"symptoms\": \"dolor toracico intenso opresivo con disnea e irradiacion a brazo izquierdo\",\n  \"vitals\": { \"bp\": \"180/110\", \"hr\": 115, \"spo2\": 91 }\n}"
+            }
+          }
+        },
+        {
+          "name": "P2 — Alta (cefalea de alarma)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPathTest}}", "host": ["{{baseUrl}}{{webhookPathTest}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-2024-002\",\n  \"age\": 54,\n  \"symptoms\": \"cefalea subita intensa thunderclap con vision borrosa y focalidad neurologica\",\n  \"vitals\": { \"bp\": \"160/95\", \"hr\": 88, \"spo2\": 97 }\n}"
+            }
+          }
+        },
+        {
+          "name": "P3 — Media (síntomas moderados)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPathTest}}", "host": ["{{baseUrl}}{{webhookPathTest}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-2024-003\",\n  \"age\": 40,\n  \"symptoms\": \"dolor abdominal moderado con nauseas sin fiebre\",\n  \"vitals\": { \"bp\": \"125/80\", \"hr\": 85, \"spo2\": 98 }\n}"
+            }
+          }
+        },
+        {
+          "name": "P4 — Baja (consulta leve)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPathTest}}", "host": ["{{baseUrl}}{{webhookPathTest}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-2024-004\",\n  \"age\": 32,\n  \"symptoms\": \"dolor de garganta leve, congestion nasal, sin fiebre\",\n  \"vitals\": { \"hr\": 72, \"spo2\": 98 }\n}"
+            }
+          }
+        },
+        {
+          "name": "Override — síntomas leves + vitales críticos",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPathTest}}", "host": ["{{baseUrl}}{{webhookPathTest}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-2024-005\",\n  \"age\": 28,\n  \"symptoms\": \"me siento un poco cansado\",\n  \"vitals\": { \"bp\": \"185/100\", \"hr\": 118, \"spo2\": 90 }\n}"
+            }
+          }
+        },
+        {
+          "name": "Error — input inválido (falta symptoms)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPathTest}}", "host": ["{{baseUrl}}{{webhookPathTest}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-2024-006\",\n  \"age\": 50\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Healthcheck — n8n vivo",
+      "event": [
+        {
+          "listen": "test",
+          "script": {
+            "type": "text/javascript",
+            "exec": [
+              "pm.test('Status 200', () => pm.response.to.have.status(200));",
+              "pm.test('status ok', () => pm.expect(pm.response.json().status).to.eql('ok'));"
+            ]
+          }
+        }
+      ],
+      "request": {
+        "method": "GET",
+        "header": [],
+        "url": { "raw": "{{baseUrl}}/healthz", "host": ["{{baseUrl}}/healthz"] }
+      }
+    }
+  ]
+}

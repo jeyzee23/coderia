@@ -1,0 +1,477 @@
+{
+  "name": "Healthcare AI Automation - Actividad Práctica",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 🏥 Healthcare AI Automation\n\n**Actividad práctica — Semana 1**\n\nFlujo de triage clínico con IA que implementa:\n\n- ✅ Webhook con validación y anonimización\n- 🔍 Búsqueda semántica (embeddings simulados)\n- 🤖 Análisis IA con Gemini 2.0 Flash vía OpenRouter\n- 🛡️ Política de reintentos + fallback determinista\n- 📊 Clasificación de riesgo con override por vitales\n- 📨 Notificación con SLA por prioridad\n\n### 🧪 Probar el flujo\n\n```bash\ncurl -X POST [WEBHOOK_URL] \\\n  -H 'Content-Type: application/json' \\\n  -d '{\n    \"patientId\": \"P-2024-001\",\n    \"age\": 67,\n    \"symptoms\": \"dolor toracico intenso con disnea\",\n    \"vitals\": { \"bp\": \"180/110\", \"hr\": 115, \"spo2\": 91 }\n  }'\n```",
+        "height": 480,
+        "width": 420,
+        "color": 7
+      },
+      "id": "note-intro",
+      "name": "📘 Documentación",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-340, 180]
+    },
+    {
+      "parameters": {
+        "content": "## ⚙️ SETUP REQUERIDO\n\n**1. Crear credential de OpenRouter:**\n\n- Credentials → Add Credential → **Header Auth**\n- Name: `OpenRouter API`\n- Header Name: `Authorization`\n- Header Value: `Bearer sk-or-v1-XXXXX`\n\n**2. Asignar la credential** al nodo `🤖 Análisis IA (OpenRouter)`\n\n**3. Configurar webhook de notificación:**\n\n- Ir a https://webhook.site\n- Copiar el URL único\n- Reemplazarlo en el nodo `📨 Notificación`\n\n**4. Activar el workflow** (toggle superior derecho)\n\n**5. Probar** con la Postman Collection o curl",
+        "height": 440,
+        "width": 380,
+        "color": 6
+      },
+      "id": "note-setup",
+      "name": "⚙️ Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [100, -260]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "patient-analysis",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "🩺 Webhook - Datos Paciente",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [180, 440],
+      "webhookId": "patient-analysis-demo"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// VALIDACIÓN Y ANONIMIZACIÓN DE INPUT\n// ═══════════════════════════════════════\n\nconst input = $input.first().json.body || $input.first().json;\n\nconst required = ['patientId', 'symptoms'];\nconst missing = required.filter(f => !input[f]);\n\nif (missing.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: `Campos faltantes: ${missing.join(', ')}`,\n      statusCode: 400\n    }\n  }];\n}\n\n// Hash del patientId para no loggear data identificable\nconst hashId = (id) => {\n  let h = 0;\n  for (let i = 0; i < String(id).length; i++) {\n    h = ((h << 5) - h) + String(id).charCodeAt(i);\n  }\n  return 'hash_' + Math.abs(h).toString(36);\n};\n\nconst vitals = input.vitals || {};\nconst bpSystolic = vitals.bp ? parseInt(String(vitals.bp).split('/')[0]) : null;\n\n// Flag de signos vitales críticos\nconst hasCriticalVitals = (\n  (vitals.spo2 != null && vitals.spo2 < 92) ||\n  (vitals.hr != null && (vitals.hr > 110 || vitals.hr < 50)) ||\n  (bpSystolic != null && bpSystolic > 170) ||\n  (vitals.temp != null && vitals.temp >= 39)\n);\n\nreturn [{\n  json: {\n    valid: true,\n    patientHash: hashId(input.patientId),\n    age: input.age || null,\n    symptoms: String(input.symptoms).trim(),\n    vitals,\n    hasCriticalVitals,\n    timestamp: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "✅ Validar Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [400, 440]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "valid-check",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "❓ ¿Input válido?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [620, 440]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: $json.error, statusCode: 400 } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-error",
+      "name": "❌ Respuesta de Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [840, 640]
+    },
+    {
+      "parameters": {
+        "content": "## 🔍 Búsqueda Semántica\n\n**Simulación educativa:**\n\n- 6 protocolos clínicos en memoria\n- \"Embedding\" tipo bag-of-words hashed\n- Cosine similarity sobre los docs\n- Top-3 resultados → contexto para la IA\n\n**En producción usaríamos:**\n- Embeddings reales (OpenAI, Cohere, BGE)\n- Vector store (Pinecone, Qdrant, Supabase pgvector)\n- RAG (Retrieval Augmented Generation)\n\n**Riesgo:** embeddings simulados son imprecisos — solo demuestran el patrón arquitectónico.",
+        "height": 380,
+        "width": 340,
+        "color": 4
+      },
+      "id": "note-embeddings",
+      "name": "📝 Nota Embeddings",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [820, 40]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// BÚSQUEDA SEMÁNTICA CON EMBEDDINGS (SIMULADA)\n// ═══════════════════════════════════════\n\nconst input = $input.first().json;\n\nconst clinicalDocs = [\n  {\n    id: 'doc-001',\n    title: 'Protocolo Síndrome Coronario Agudo',\n    content: 'El dolor toracico opresivo irradiado a brazo izquierdo con disnea sugiere infarto agudo de miocardio. Actuar en ventana dorada menor a 90 minutos. Solicitar ECG, troponinas, activar hemodinamia.',\n    specialty: 'cardiologia',\n    urgency: 'critica'\n  },\n  {\n    id: 'doc-002',\n    title: 'Manejo de Crisis Hipertensiva',\n    content: 'Presion arterial mayor a 180/120 con sintomas como cefalea intensa, vision borrosa o dolor toracico indica emergencia hipertensiva. Descenso controlado de PA 20 por ciento primera hora.',\n    specialty: 'cardiologia',\n    urgency: 'alta'\n  },\n  {\n    id: 'doc-003',\n    title: 'Evaluación de Disnea Aguda',\n    content: 'Dificultad respiratoria con saturacion menor a 92 por ciento requiere oxigenoterapia inmediata. Diagnosticos diferenciales TEP, neumonia, insuficiencia cardiaca, broncoespasmo.',\n    specialty: 'neumologia',\n    urgency: 'alta'\n  },\n  {\n    id: 'doc-004',\n    title: 'Protocolo Sepsis Temprana',\n    content: 'Fiebre con taquicardia e hipotension en contexto de infeccion. Aplicar qSOFA. Bundle de sepsis cultivos, lactato, antibioticos en primera hora, fluidos cristaloides.',\n    specialty: 'infectologia',\n    urgency: 'critica'\n  },\n  {\n    id: 'doc-005',\n    title: 'Cefalea de Alarma - Red Flags',\n    content: 'Cefalea subita intensa thunderclap, focalidad neurologica, fiebre, trauma craneal reciente o mayor a 50 años. Descartar HSA, meningitis, tumor. TC de cerebro urgente.',\n    specialty: 'neurologia',\n    urgency: 'alta'\n  },\n  {\n    id: 'doc-006',\n    title: 'Consulta General - Baja Complejidad',\n    content: 'Sintomas leves sin signos de alarma. Evaluacion ambulatoria estandar, seguimiento por medico de cabecera. Educar sobre signos de empeoramiento.',\n    specialty: 'clinica',\n    urgency: 'baja'\n  }\n];\n\nfunction embed(text) {\n  const vec = new Array(128).fill(0);\n  const words = String(text).toLowerCase()\n    .replace(/[^a-záéíóúñ ]/g, ' ')\n    .split(/\\s+/)\n    .filter(w => w.length > 2);\n  \n  words.forEach(w => {\n    for (let i = 0; i < w.length; i++) {\n      vec[(w.charCodeAt(i) * 31 + i) % 128] += 1;\n    }\n  });\n  \n  const mag = Math.sqrt(vec.reduce((s, v) => s + v * v, 0));\n  return mag > 0 ? vec.map(v => v / mag) : vec;\n}\n\nfunction cosineSim(a, b) {\n  return a.reduce((s, v, i) => s + v * b[i], 0);\n}\n\nconst queryVec = embed(input.symptoms);\n\nconst ranked = clinicalDocs\n  .map(doc => ({\n    ...doc,\n    similarity: +cosineSim(queryVec, embed(doc.content + ' ' + doc.title)).toFixed(4)\n  }))\n  .sort((a, b) => b.similarity - a.similarity)\n  .slice(0, 3);\n\nreturn [{\n  json: {\n    ...input,\n    relevantDocs: ranked,\n    topDocContext: ranked.map(d => `[${d.title}]: ${d.content}`).join('\\n\\n')\n  }\n}];"
+      },
+      "id": "semantic-search",
+      "name": "🔍 Búsqueda Semántica",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [840, 440]
+    },
+    {
+      "parameters": {
+        "content": "## 🛡️ Política de Fallback\n\n**Estrategia por capas:**\n\n1. **Retry:** 3 intentos con 2s entre cada uno\n2. **Timeout:** 10s por intento\n3. **Continue on Fail:** el flujo no se corta\n4. **IF check:** detecta si la IA respondió\n5. **Parser robusto:** limpia markdown fences\n6. **Fallback reglas:** basado en búsqueda semántica + vitales\n\n**¿Por qué?** Un sistema clínico no puede depender 100% de la IA. El fallback reglamentado garantiza continuidad con menor precisión pero alta disponibilidad.",
+        "height": 380,
+        "width": 340,
+        "color": 3
+      },
+      "id": "note-fallback",
+      "name": "📝 Nota Fallback",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1100, 40]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "HTTP-Referer",
+              "value": "https://jcvidela.app.n8n.cloud"
+            },
+            {
+              "name": "X-Title",
+              "value": "Healthcare AI Triage - Coderhouse"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"google/gemini-2.0-flash-001\",\n  \"temperature\": 0.2,\n  \"max_tokens\": 500,\n  \"messages\": [\n    {\n      \"role\": \"system\",\n      \"content\": \"Sos un asistente clínico que hace triage preliminar. Tu respuesta DEBE ser EXCLUSIVAMENTE un objeto JSON válido, sin bloques de código markdown, sin texto antes o después, sin comentarios.\\n\\nFormato obligatorio:\\n{\\n  \\\"analysis\\\": \\\"análisis clínico breve en 1-2 oraciones\\\",\\n  \\\"urgency\\\": \\\"critica\\\" | \\\"alta\\\" | \\\"media\\\" | \\\"baja\\\",\\n  \\\"recommendedAction\\\": \\\"acción recomendada concreta\\\",\\n  \\\"differentialDiagnosis\\\": [\\\"diagnóstico 1\\\", \\\"diagnóstico 2\\\", \\\"diagnóstico 3\\\"]\\n}\\n\\nNO reemplazás el criterio médico profesional.\"\n    },\n    {\n      \"role\": \"user\",\n      \"content\": \"CONTEXTO CLÍNICO RELEVANTE:\\n{{ $json.topDocContext }}\\n\\nPACIENTE:\\n- Edad: {{ $json.age }}\\n- Síntomas: {{ $json.symptoms }}\\n- Signos vitales: {{ JSON.stringify($json.vitals) }}\\n- Vitales críticos detectados: {{ $json.hasCriticalVitals }}\\n\\nDevolvé ÚNICAMENTE el JSON.\"\n    }\n  ]\n}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "openrouter-analysis",
+      "name": "🤖 Análisis IA (OpenRouter)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, 440],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "notes": "Modelo: google/gemini-2.0-flash-001\nProvider: OpenRouter\n\nCredential: Header Auth con\n  Name: Authorization\n  Value: Bearer sk-or-v1-XXXX\n\nRetry: 3 intentos, 2s entre cada uno\nTimeout: 10s\nContinue on Fail: activo"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "ai-ok",
+              "leftValue": "={{ $json.choices && $json.choices[0] && $json.choices[0].message && $json.choices[0].message.content ? 'ok' : '' }}",
+              "rightValue": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-ai-success",
+      "name": "❓ ¿IA respondió OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1340, 440]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// PARSER ROBUSTO DE RESPUESTA IA\n// ═══════════════════════════════════════\n// Maneja: JSON directo, markdown code fences, texto extra alrededor\n\nconst aiData = $input.first().json;\nconst previousData = $('🔍 Búsqueda Semántica').first().json;\n\nfunction extractJson(text) {\n  if (text == null) return null;\n  if (typeof text === 'object') return text;\n  if (typeof text !== 'string') return null;\n  \n  // 1. Intento directo\n  try { return JSON.parse(text); } catch (e) {}\n  \n  // 2. Limpiar markdown code fences\n  const cleaned = text\n    .replace(/^```(?:json)?\\s*/i, '')\n    .replace(/\\s*```\\s*$/, '')\n    .trim();\n  try { return JSON.parse(cleaned); } catch (e) {}\n  \n  // 3. Extraer primer bloque { ... } con regex\n  const match = text.match(/\\{[\\s\\S]*\\}/);\n  if (match) {\n    try { return JSON.parse(match[0]); } catch (e) {}\n  }\n  \n  return null;\n}\n\nconst content = aiData?.choices?.[0]?.message?.content;\nconst parsed = extractJson(content);\n\nif (!parsed) {\n  // Parseo falló — usar datos de búsqueda semántica como fallback\n  return [{\n    json: {\n      ...previousData,\n      aiAnalysis: {\n        analysis: 'No se pudo parsear respuesta IA — usando datos de búsqueda semántica',\n        urgency: previousData.relevantDocs[0]?.urgency || 'media',\n        recommendedAction: `Consultar protocolo: ${previousData.relevantDocs[0]?.title || 'general'}`,\n        differentialDiagnosis: previousData.relevantDocs.map(d => d.title)\n      },\n      source: 'parse-error-fallback',\n      fallbackUsed: true,\n      tokensUsed: aiData?.usage?.total_tokens || 0,\n      rawContent: content\n    }\n  }];\n}\n\n// Normalizar campo urgency (por si la IA devuelve variaciones)\nconst urgencyMap = {\n  'crítica': 'critica', 'critical': 'critica', 'critica': 'critica',\n  'alta': 'alta', 'high': 'alta',\n  'media': 'media', 'medium': 'media', 'moderada': 'media',\n  'baja': 'baja', 'low': 'baja'\n};\n\nconst normalizedUrgency = urgencyMap[String(parsed.urgency || '').toLowerCase()] || 'media';\n\nreturn [{\n  json: {\n    patientHash: previousData.patientHash,\n    age: previousData.age,\n    symptoms: previousData.symptoms,\n    vitals: previousData.vitals,\n    hasCriticalVitals: previousData.hasCriticalVitals,\n    relevantDocs: previousData.relevantDocs,\n    aiAnalysis: {\n      analysis: parsed.analysis || 'Sin análisis disponible',\n      urgency: normalizedUrgency,\n      recommendedAction: parsed.recommendedAction || 'Evaluación médica presencial',\n      differentialDiagnosis: Array.isArray(parsed.differentialDiagnosis) ? parsed.differentialDiagnosis : []\n    },\n    source: 'openrouter-gemini-2.0-flash',\n    fallbackUsed: false,\n    tokensUsed: aiData?.usage?.total_tokens || 0\n  }\n}];"
+      },
+      "id": "parse-ai-response",
+      "name": "📝 Parsear Respuesta IA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 320]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// FALLBACK: ANÁLISIS BASADO EN REGLAS\n// ═══════════════════════════════════════\n// Se ejecuta cuando la llamada a OpenRouter falla.\n// Genera una respuesta determinista usando búsqueda semántica + vitales.\n\nconst data = $('🔍 Búsqueda Semántica').first().json;\n\nlet urgency = 'media';\nlet recommendedAction = 'Evaluación médica presencial';\n\nif (data.hasCriticalVitals) {\n  urgency = 'critica';\n  recommendedAction = '🚨 Activar protocolo de emergencia. Derivar a guardia inmediatamente.';\n} else if (data.relevantDocs[0]?.urgency === 'critica') {\n  urgency = 'alta';\n  recommendedAction = `Evaluación urgente. Consultar protocolo: ${data.relevantDocs[0].title}`;\n} else if (data.relevantDocs[0]?.urgency === 'alta') {\n  urgency = 'alta';\n  recommendedAction = 'Derivar a guardia dentro de las próximas 2 horas';\n} else {\n  urgency = 'baja';\n  recommendedAction = 'Consulta programada con médico de cabecera';\n}\n\nreturn [{\n  json: {\n    patientHash: data.patientHash,\n    age: data.age,\n    symptoms: data.symptoms,\n    vitals: data.vitals,\n    hasCriticalVitals: data.hasCriticalVitals,\n    relevantDocs: data.relevantDocs,\n    aiAnalysis: {\n      analysis: `FALLBACK REGLAS: top match con \"${data.relevantDocs[0]?.title}\" (similitud ${data.relevantDocs[0]?.similarity}).`,\n      urgency,\n      recommendedAction,\n      differentialDiagnosis: data.relevantDocs.map(d => d.title)\n    },\n    source: 'fallback-rules-engine',\n    fallbackUsed: true,\n    tokensUsed: 0\n  }\n}];"
+      },
+      "id": "fallback-response",
+      "name": "⚠️ Fallback (Reglas)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1560, 580]
+    },
+    {
+      "parameters": {
+        "mode": "chooseBranch",
+        "output": "input1"
+      },
+      "id": "merge-paths",
+      "name": "🔀 Unir caminos",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [1780, 440]
+    },
+    {
+      "parameters": {
+        "content": "## 📊 Clasificación y SLA\n\n| Prioridad | Urgencia IA | SLA |\n|-----------|-------------|-----|\n| P1 | Crítica | 5 min |\n| P2 | Alta | 30 min |\n| P3 | Media | 2 hs |\n| P4 | Baja | 24 hs |\n\n**Regla de override:**\nSi los signos vitales son críticos (SpO2<92, HR<50 o HR>110, TA sistólica>170, temp≥39), se fuerza prioridad mínima P2 aunque la IA estime menor.",
+        "height": 340,
+        "width": 320,
+        "color": 5
+      },
+      "id": "note-classification",
+      "name": "📝 Nota Clasificación",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1960, 40]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// CLASIFICACIÓN FINAL + PRIORIZACIÓN\n// ═══════════════════════════════════════\n// Combina la urgencia del análisis con los signos vitales\n// para definir la prioridad final y el SLA.\n\nconst d = $input.first().json;\n\nconst urgencyScore = {\n  critica: 4,\n  alta: 3,\n  media: 2,\n  baja: 1\n};\n\nlet aiScore = urgencyScore[d.aiAnalysis.urgency] || 2;\n\n// Override por signos vitales críticos\nif (d.hasCriticalVitals && aiScore < 3) aiScore = 3;\n\nconst priority = \n  aiScore >= 4 ? 'P1_CRITICAL' :\n  aiScore === 3 ? 'P2_HIGH' :\n  aiScore === 2 ? 'P3_MEDIUM' : 'P4_LOW';\n\nconst slaMinutes = \n  priority === 'P1_CRITICAL' ? 5 :\n  priority === 'P2_HIGH' ? 30 :\n  priority === 'P3_MEDIUM' ? 120 : 1440;\n\nreturn [{\n  json: {\n    ...d,\n    triage: {\n      priority,\n      urgency: d.aiAnalysis.urgency,\n      slaMinutes,\n      slaDeadline: new Date(Date.now() + slaMinutes * 60000).toISOString(),\n      overrideApplied: d.hasCriticalVitals && urgencyScore[d.aiAnalysis.urgency] < 3\n    }\n  }\n}];"
+      },
+      "id": "risk-classification",
+      "name": "📊 Clasificación Riesgo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 440]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://webhook.site/REEMPLAZAR-CON-TU-URL",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Priority",
+              "value": "={{ $json.triage.priority }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"event\": \"patient_triage_completed\",\n  \"priority\": \"{{ $json.triage.priority }}\",\n  \"slaMinutes\": {{ $json.triage.slaMinutes }},\n  \"slaDeadline\": \"{{ $json.triage.slaDeadline }}\",\n  \"overrideApplied\": {{ $json.triage.overrideApplied }},\n  \"patientHash\": \"{{ $json.patientHash }}\",\n  \"urgency\": \"{{ $json.aiAnalysis.urgency }}\",\n  \"recommendedAction\": \"{{ $json.aiAnalysis.recommendedAction }}\",\n  \"analysis\": \"{{ $json.aiAnalysis.analysis }}\",\n  \"differentialDiagnosis\": {{ JSON.stringify($json.aiAnalysis.differentialDiagnosis) }},\n  \"source\": \"{{ $json.source }}\",\n  \"fallbackUsed\": {{ $json.fallbackUsed }},\n  \"tokensUsed\": {{ $json.tokensUsed }},\n  \"timestamp\": \"{{ $now }}\"\n}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "send-notification",
+      "name": "📨 Notificación",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2220, 440],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "onError": "continueRegularOutput",
+      "notes": "Reemplazar URL por tu webhook.site, Slack, Teams, etc.\nSi falla la notificación NO rompe el flujo — el triage ya se hizo."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  success: true,\n  triage: $('📊 Clasificación Riesgo').first().json.triage,\n  analysis: $('📊 Clasificación Riesgo').first().json.aiAnalysis,\n  source: $('📊 Clasificación Riesgo').first().json.source,\n  fallbackUsed: $('📊 Clasificación Riesgo').first().json.fallbackUsed,\n  tokensUsed: $('📊 Clasificación Riesgo').first().json.tokensUsed,\n  relevantProtocols: $('📊 Clasificación Riesgo').first().json.relevantDocs.map(d => ({ id: d.id, title: d.title, similarity: d.similarity }))\n} }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "📤 Respuesta OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2440, 440]
+    },
+    {
+      "parameters": {
+        "content": "## 🔒 Privacidad & Regulación\n\n**Decisiones tomadas:**\n\n1. **Hashing de patientId** antes de propagarlo al flujo\n2. **No logging de síntomas completos** en outputs intermedios\n3. **Timeout agresivo (10s)** en llamadas a LLM externos\n4. **Audit trail implícito** vía ejecuciones de n8n\n\n**Pendiente para producción:**\n\n- ❗ Encriptación de campos sensibles en el flujo\n- ❗ Filtro de PII antes de enviar al LLM (o usar Azure OpenAI / Vertex AI con BAA)\n- ❗ Consentimiento informado previo al uso del sistema\n- ❗ DPO / comité de ética debe aprobar el uso clínico\n- ❗ Versionado y explicabilidad de las decisiones\n\n**Normativas aplicables (AR):**\n- Ley 26.529 (Derechos del Paciente)\n- Ley 25.326 (Protección Datos Personales)\n- Resolución 189/2018 MSAL (HCE)",
+        "height": 500,
+        "width": 380,
+        "color": 2
+      },
+      "id": "note-privacy",
+      "name": "📝 Nota Privacidad",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-340, 720]
+    }
+  ],
+  "connections": {
+    "🩺 Webhook - Datos Paciente": {
+      "main": [
+        [
+          {
+            "node": "✅ Validar Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Validar Input": {
+      "main": [
+        [
+          {
+            "node": "❓ ¿Input válido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ ¿Input válido?": {
+      "main": [
+        [
+          {
+            "node": "🔍 Búsqueda Semántica",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "❌ Respuesta de Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔍 Búsqueda Semántica": {
+      "main": [
+        [
+          {
+            "node": "🤖 Análisis IA (OpenRouter)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 Análisis IA (OpenRouter)": {
+      "main": [
+        [
+          {
+            "node": "❓ ¿IA respondió OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ ¿IA respondió OK?": {
+      "main": [
+        [
+          {
+            "node": "📝 Parsear Respuesta IA",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "⚠️ Fallback (Reglas)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📝 Parsear Respuesta IA": {
+      "main": [
+        [
+          {
+            "node": "🔀 Unir caminos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚠️ Fallback (Reglas)": {
+      "main": [
+        [
+          {
+            "node": "🔀 Unir caminos",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "🔀 Unir caminos": {
+      "main": [
+        [
+          {
+            "node": "📊 Clasificación Riesgo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Clasificación Riesgo": {
+      "main": [
+        [
+          {
+            "node": "📨 Notificación",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📨 Notificación": {
+      "main": [
+        [
+          {
+            "node": "📤 Respuesta OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "2.0.0",
+  "meta": {
+    "templateCreatedBy": "Juanca - Coderhouse AI Automation"
+  },
+  "tags": [
+    {
+      "name": "healthcare"
+    },
+    {
+      "name": "demo"
+    },
+    {
+      "name": "openrouter"
+    },
+    {
+      "name": "gemini"
+    }
+  ]
+}
