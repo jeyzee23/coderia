@@ -1,0 +1,32 @@
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n-dev-c2
+    restart: unless-stopped
+    ports:
+      - "5679:5678"
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5679/
+      - N8N_EDITOR_BASE_URL=http://localhost:5679/
+      - GENERIC_TIMEZONE=America/Argentina/Buenos_Aires
+      - TZ=America/Argentina/Buenos_Aires
+      - N8N_ENCRYPTION_KEY=${N8N_ENCRYPTION_KEY}
+      - N8N_SECURE_COOKIE=false
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - DB_TYPE=sqlite
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=168
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
+      - NOTIFICATION_WEBHOOK_URL=${NOTIFICATION_WEBHOOK_URL}
+      - ALERT_WEBHOOK_URL=${ALERT_WEBHOOK_URL}
+      - LLAMA_CLOUD_API_KEY=${LLAMA_CLOUD_API_KEY}
+    volumes:
+      - n8n_data_c2:/home/node/.n8n
+
+volumes:
+  n8n_data_c2:

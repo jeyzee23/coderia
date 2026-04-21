@@ -1,108 +1,190 @@
-# Healthcare AI Triage — n8n + OpenRouter
+# Healthcare AI Triage — Curso de IA aplicada
 
-Actividad práctica de automatización con IA. Workflow de **triage clínico preliminar** corriendo en n8n self-hosted que combina búsqueda semántica, análisis por LLM y una política de fallback determinista.
+Workflow de **triage clínico** construido en n8n self-hosted + OpenRouter. Dos clases progresivas: arrancás con un flujo simple y lo vas extendiendo con técnicas de prompting avanzado, ingesta de PDFs y observabilidad.
 
 > ⚠️ Proyecto educativo. No usar para decisiones clínicas reales.
 
-## Arquitectura
+---
+
+## 📚 Estructura del repo
 
 ```
-Webhook → Validar & anonimizar → Búsqueda semántica (embeddings simulados)
-  → OpenRouter (Gemini 2.0 Flash) ──┐
-                                    ├→ Clasificación (P1–P4 + SLA) → Notificación → Respuesta
-  → Fallback reglas (si falla IA) ──┘
+coder-ia/
+├── clase-1/   → Workflow base (puerto 5678)
+└── clase-2/   → Extensión avanzada (puerto 5679)
 ```
 
-Decisiones clave:
+Cada carpeta es **auto-contenida**: tiene su propio `docker-compose.yml`, `.env.example`, `workflow.json` y `README.md`. Conviven sin chocar.
 
-- **Hashing de `patientId`** antes de propagar — no se logea PII identificable.
-- **Retry 3× + timeout 10s + `continueOnFail`** en la llamada al LLM.
-- **Parser robusto** que tolera markdown fences o texto extra alrededor del JSON.
-- **Override por vitales críticos**: SpO2 < 92, HR < 50 o > 110, TA sistólica > 170, temp ≥ 39 → fuerza prioridad mínima P2 aunque la IA diga menos.
-- **Clasificación final**: P1 (5 min) / P2 (30 min) / P3 (2 h) / P4 (24 h).
+---
 
-## Stack
+## 🎯 Qué aprendés en cada clase
 
-- **n8n** self-hosted vía Docker Compose
-- **OpenRouter** → `google/gemini-2.0-flash-001`
-- **Postman** para pruebas
+| Clase | Tema | Qué construís |
+|-------|------|---------------|
+| **1️⃣** | Fundamentos | Webhook → validación → búsqueda semántica → LLM → clasificación P1–P4 + fallback por reglas |
+| **2️⃣** | Prompting avanzado + ingesta + observabilidad | Few-shot, JSON Schema validator, ingesta de PDFs via LlamaCloud, logs estructurados y alertas |
 
-## Requisitos
+### Diagrama mental
 
-- Docker Desktop
-- Una API key de [OpenRouter](https://openrouter.ai/keys)
-- (Opcional) URL de [webhook.site](https://webhook.site) para ver las notificaciones
+```
+┌─────────── CLASE 1 ────────────┐   ┌─────────── CLASE 2 ────────────┐
+                                      (todo lo de clase 1, más:)
 
-## Setup
+  Webhook JSON                         + Webhook PDF → LlamaCloud
+       ↓                               + Few-shot prompting
+  Validar paciente                     + JSON Schema validator
+       ↓                               + Log estructurado (latencia, tokens)
+  Buscar protocolos                    + Alertas a webhook externo
+       ↓
+  LLM (Gemini 2.0 Flash)
+       ↓
+  Clasificar P1/P2/P3/P4
+       ↓
+  Notificar + responder
+```
+
+---
+
+## 🛠️ Requisitos previos
+
+- **Docker Desktop** corriendo
+- Una **API key de [OpenRouter](https://openrouter.ai/keys)** (gratis para empezar)
+- Una URL de **[webhook.site](https://webhook.site)** para ver notificaciones
+- **Solo para clase 2:** API key de **[LlamaCloud](https://cloud.llamaindex.ai)** → API Keys → Generate New Key
+
+---
+
+## 🚀 Instalación rápida
+
+### 1. Cloná el repo
 
 ```bash
-git clone git@github.com:jeyzee23/coderia.git
+git clone https://github.com/jeyzee23/coderia.git
 cd coderia
+```
 
+### 2. Elegí la clase y arrancala
+
+**Clase 1:**
+
+```bash
+cd clase-1
 cp .env.example .env
-# Editar .env con tus valores reales:
-#   - N8N_ENCRYPTION_KEY: generar con `openssl rand -hex 32`
-#   - OPENROUTER_API_KEY: tu key de OpenRouter
-#   - NOTIFICATION_WEBHOOK_URL: tu URL de webhook.site
-
+# Editá .env con tus keys
 docker compose up -d
 ```
 
-n8n queda en http://localhost:5678.
+Abrí → **http://localhost:5678**
 
-### Importar el workflow
+**Clase 2:**
 
-1. Abrir http://localhost:5678, crear el usuario owner.
-2. **Workflows → Import from file →** `workflow.json` (o `index.json`, son equivalentes; `index.json` es la versión que usa `$env.NOTIFICATION_WEBHOOK_URL` directo desde docker-compose).
-3. En el nodo **🤖 Análisis IA (OpenRouter)**: crear credential **Header Auth** con
-   - Name: `Authorization`
-   - Value: `Bearer sk-or-v1-...` (tu key)
-4. Activar el workflow (toggle arriba a la derecha).
+```bash
+cd clase-2
+cp .env.example .env
+# Editá .env con tus keys
+docker compose up -d
+```
 
-## Probar
+Abrí → **http://localhost:5679**
 
-### Con curl
+### 3. Importá el workflow
+
+1. Entrá a la URL de arriba y creá usuario owner.
+2. **Workflows → Import from file →** `workflow.json` de la carpeta.
+3. Activá con el toggle arriba a la derecha.
+
+---
+
+## 🧪 Probarlo
+
+### Clase 1 (puerto 5678)
 
 ```bash
 curl -X POST http://localhost:5678/webhook/patient-analysis \
   -H 'Content-Type: application/json' \
   -d '{
-    "patientId": "P-2024-001",
+    "patientId": "P-001",
     "age": 67,
     "symptoms": "dolor toracico intenso con disnea",
     "vitals": { "bp": "180/110", "hr": 115, "spo2": 91 }
   }'
 ```
 
-### Con Postman
+### Clase 2 (puerto 5679) — mismo endpoint, más info en la respuesta
 
-Importar `postman_collection.json`. Trae dos carpetas:
-
-- **Producción (`/webhook`)** — requiere workflow Active. Corre en background, resultado visible en la tab **Executions** del editor.
-- **Test (`/webhook-test`)** — apretar **"Execute workflow"** en el editor *antes de cada request*. Anima el canvas nodo por nodo.
-
-Incluye casos para P1/P2/P3/P4, override por vitales, y error 400.
-
-## Estructura
-
-```
-.
-├── docker-compose.yml       # n8n self-hosted con envs desde .env
-├── .env.example             # template de variables
-├── workflow.json            # versión con webhook.site hardcodeado
-├── index.json               # versión que lee NOTIFICATION_WEBHOOK_URL de env
-├── postman_collection.json  # tests Postman (producción + test)
-└── README.md
+```bash
+curl -X POST http://localhost:5679/webhook/patient-analysis \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "patientId": "P-001",
+    "age": 67,
+    "symptoms": "dolor toracico intenso con disnea",
+    "vitals": { "bp": "180/110", "hr": 115, "spo2": 91 }
+  }'
 ```
 
-## Notas sobre privacidad
+### Postman
 
-Para producción real habría que sumar:
+Cada clase trae su `postman_collection.json` con casos preparados (P1, P2, P3, P4, override por vitales, error 400, PDFs en clase 2). Importalo y listo.
 
-- Filtro de PII antes de mandar al LLM (o usar Azure OpenAI / Vertex AI con BAA).
-- Encriptación de campos sensibles en tránsito dentro del flujo.
-- Consentimiento informado del paciente.
-- Comité de ética / DPO validando el uso clínico.
-- Versionado y explicabilidad de las decisiones.
+---
 
-Normativas aplicables (AR): Ley 26.529 (Derechos del Paciente), Ley 25.326 (Protección Datos Personales), Resolución 189/2018 MSAL.
+## 📁 Qué hay en cada archivo
+
+```
+clase-N/
+├── docker-compose.yml       ← configuración del container de n8n
+├── .env.example             ← template de variables (NO subir el .env real)
+├── workflow.json            ← el workflow para importar a n8n
+├── postman_collection.json  ← casos de prueba listos
+└── README.md                ← documentación específica de la clase
+```
+
+Clase 2 suma `GUIA.md` (guía detallada del profesor) y `entregable-modelo.md` (ejemplo de entrega).
+
+---
+
+## 🧯 Troubleshooting
+
+| Problema | Solución |
+|----------|----------|
+| "Port 5678/5679 already in use" | Otro proceso ocupa el puerto. `docker ps` y bajá lo que sobra. |
+| "workflow execution failed: unauthorized" | Revisá la `OPENROUTER_API_KEY` en `.env`. |
+| La IA no responde o timeout | OpenRouter puede tardar en el primer request. Reintentá. |
+| "schemaValid: false" en clase 2 | El LLM devolvió JSON malformado — el fallback por reglas responde igual. Es esperable. |
+| En clase 2 el PDF da markdown vacío | El PDF dummy está pensado así. Usá un informe real para demo. |
+
+### Comandos útiles
+
+```bash
+# Ver estado del container
+docker ps
+
+# Ver logs
+docker logs -f n8n-dev          # clase 1
+docker logs -f n8n-dev-c2       # clase 2
+
+# Apagar
+docker compose down
+
+# Apagar y borrar todo (empezar de cero)
+docker compose down -v
+```
+
+---
+
+## 🔐 Seguridad
+
+- **Nunca subas el `.env`** — ya está en `.gitignore`.
+- Después de probar, **rotá las API keys** si las compartiste en chats o screenshots.
+- Este proyecto es educativo: no lo conectes a datos reales de pacientes sin consultar con un DPO.
+
+---
+
+## 📖 Más info
+
+- **Clase 1:** ver [clase-1/README.md](./clase-1/README.md)
+- **Clase 2:** ver [clase-2/README.md](./clase-2/README.md) y [clase-2/GUIA.md](./clase-2/GUIA.md)
+
+Dudas → preguntá en clase.

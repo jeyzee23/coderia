@@ -1,0 +1,298 @@
+{
+  "info": {
+    "name": "Healthcare AI Triage - Clase 2 (n8n Local)",
+    "description": "Pruebas del workflow extendido de clase 2.\n\nCambios vs clase 1:\n- Nuevo endpoint /webhook/patient-analysis-pdf (LlamaCloud)\n- Few-shot + top_p en el LLM\n- Validación de output schema\n- Logging estructurado + alertas\n\nPuerto: 5679 (el 5678 queda libre para clase-1).\n\nDos carpetas:\n- **JSON**: casos directos por body JSON (/webhook y /webhook-test)\n- **PDF**: ingesta por LlamaCloud (requiere LLAMA_CLOUD_API_KEY)",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "healthcare-triage-clase-2"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5679",
+      "type": "string"
+    },
+    {
+      "key": "webhookPath",
+      "value": "/webhook/patient-analysis",
+      "type": "string"
+    },
+    {
+      "key": "webhookPathTest",
+      "value": "/webhook-test/patient-analysis",
+      "type": "string"
+    },
+    {
+      "key": "webhookPathPdf",
+      "value": "/webhook/patient-analysis-pdf",
+      "type": "string"
+    },
+    {
+      "key": "webhookPathPdfTest",
+      "value": "/webhook-test/patient-analysis-pdf",
+      "type": "string"
+    },
+    {
+      "key": "samplePdfUrl",
+      "value": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+      "type": "string",
+      "description": "PDF público de prueba (dummy). Reemplazar por un informe clínico real para ver el parsing completo."
+    }
+  ],
+  "item": [
+    {
+      "name": "JSON — producción (/webhook)",
+      "description": "Workflow debe estar Active. Ver resultados en tab Executions.",
+      "item": [
+        {
+          "name": "P1 — Crítico (vitales críticos + dolor torácico)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('priority P1_CRITICAL', () => pm.expect(b.triage.priority).to.eql('P1_CRITICAL'));",
+                  "pm.test('SLA 5 min', () => pm.expect(b.triage.slaMinutes).to.eql(5));",
+                  "pm.test('schemaValid true', () => pm.expect(b.schemaValid).to.be.true);",
+                  "pm.test('fallbackUsed false', () => pm.expect(b.fallbackUsed).to.be.false);",
+                  "pm.test('log con latencyMs', () => pm.expect(b.log.latencyMs).to.be.a('number'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPath}}", "host": ["{{baseUrl}}{{webhookPath}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-C2-001\",\n  \"age\": 67,\n  \"symptoms\": \"dolor toracico intenso opresivo con disnea e irradiacion a brazo izquierdo\",\n  \"vitals\": { \"bp\": \"180/110\", \"hr\": 115, \"spo2\": 91 }\n}"
+            }
+          }
+        },
+        {
+          "name": "P2 — Alta (cefalea de alarma)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('priority ≤ P2', () => pm.expect(['P1_CRITICAL','P2_HIGH']).to.include(b.triage.priority));",
+                  "pm.test('schemaValid true', () => pm.expect(b.schemaValid).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPath}}", "host": ["{{baseUrl}}{{webhookPath}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-C2-002\",\n  \"age\": 54,\n  \"symptoms\": \"cefalea subita intensa thunderclap con vision borrosa y focalidad neurologica\",\n  \"vitals\": { \"bp\": \"160/95\", \"hr\": 88, \"spo2\": 97 }\n}"
+            }
+          }
+        },
+        {
+          "name": "P4 — Baja (consulta leve)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('priority P4_LOW', () => pm.expect(b.triage.priority).to.eql('P4_LOW'));",
+                  "pm.test('SLA 24 hs', () => pm.expect(b.triage.slaMinutes).to.eql(1440));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPath}}", "host": ["{{baseUrl}}{{webhookPath}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-C2-004\",\n  \"age\": 32,\n  \"symptoms\": \"dolor de garganta leve, congestion nasal, sin fiebre\",\n  \"vitals\": { \"hr\": 72, \"spo2\": 98 }\n}"
+            }
+          }
+        },
+        {
+          "name": "Override — vitales críticos (dispara alerta)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('overrideApplied true', () => pm.expect(b.triage.overrideApplied).to.be.true);",
+                  "pm.test('priority ≥ P2', () => pm.expect(['P1_CRITICAL','P2_HIGH']).to.include(b.triage.priority));",
+                  "pm.test('log registra override', () => pm.expect(b.log.overrideApplied).to.be.true);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPath}}", "host": ["{{baseUrl}}{{webhookPath}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-C2-005\",\n  \"age\": 28,\n  \"symptoms\": \"me siento un poco cansado\",\n  \"vitals\": { \"bp\": \"185/100\", \"hr\": 118, \"spo2\": 90 }\n}"
+            }
+          }
+        },
+        {
+          "name": "Error 400 — falta symptoms",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                  "const b = pm.response.json();",
+                  "pm.test('mensaje cita symptoms', () => pm.expect(b.error).to.include('symptoms'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPath}}", "host": ["{{baseUrl}}{{webhookPath}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-C2-006\",\n  \"age\": 50\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "JSON — test (/webhook-test) — anima canvas",
+      "description": "ANTES de cada request, click en 'Execute workflow' en el editor de n8n.",
+      "item": [
+        {
+          "name": "P1 — Crítico",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPathTest}}", "host": ["{{baseUrl}}{{webhookPathTest}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-C2-001\",\n  \"age\": 67,\n  \"symptoms\": \"dolor toracico intenso opresivo con disnea e irradiacion a brazo izquierdo\",\n  \"vitals\": { \"bp\": \"180/110\", \"hr\": 115, \"spo2\": 91 }\n}"
+            }
+          }
+        },
+        {
+          "name": "P4 — Baja",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPathTest}}", "host": ["{{baseUrl}}{{webhookPathTest}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-C2-004\",\n  \"age\": 32,\n  \"symptoms\": \"dolor de garganta leve, congestion nasal, sin fiebre\",\n  \"vitals\": { \"hr\": 72, \"spo2\": 98 }\n}"
+            }
+          }
+        },
+        {
+          "name": "Override — dispara alerta",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPathTest}}", "host": ["{{baseUrl}}{{webhookPathTest}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-C2-005\",\n  \"age\": 28,\n  \"symptoms\": \"me siento un poco cansado\",\n  \"vitals\": { \"bp\": \"185/100\", \"hr\": 118, \"spo2\": 90 }\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "PDF — LlamaCloud",
+      "description": "Ingesta vía PDF. Requiere LLAMA_CLOUD_API_KEY en .env.\n\nPara tests reales reemplazar {{samplePdfUrl}} por la URL de un informe clínico público. El dummy.pdf sirve para smoke test (el markdown resultante está casi vacío y el flujo cae al fallback por falta de síntomas).",
+      "item": [
+        {
+          "name": "PDF smoke test (dummy.pdf)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('respuesta tiene triage', () => pm.expect(b.triage).to.exist);",
+                  "pm.test('log incluye inputSource pdf', () => pm.expect(b.log.inputSource).to.eql('pdf-llamacloud'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPathPdf}}", "host": ["{{baseUrl}}{{webhookPathPdf}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-C2-PDF-001\",\n  \"pdfUrl\": \"{{samplePdfUrl}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "PDF — informe clínico real (reemplazar pdfUrl)",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPathPdf}}", "host": ["{{baseUrl}}{{webhookPathPdf}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-C2-PDF-002\",\n  \"pdfUrl\": \"https://REEMPLAZAR_CON_URL_DE_TU_INFORME_CLINICO.pdf\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "PDF — test (/webhook-test) — anima canvas",
+      "description": "Anima el canvas para la rama PDF. IMPORTANTE: requiere workflow Inactive + 'Execute workflow' en el canvas (o Listen for test event en el nodo 📄 Webhook PDF).\n\nAdvertencia: en n8n 2.x el nodo 'Wait 8s' suele fallar en modo test con 'Cannot read properties of null'. El canvas se anima hasta ese nodo. Para demo completa usar PDF producción.",
+      "item": [
+        {
+          "name": "PDF smoke test (dummy.pdf) — test mode",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPathPdfTest}}", "host": ["{{baseUrl}}{{webhookPathPdfTest}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-C2-PDF-TEST-001\",\n  \"pdfUrl\": \"{{samplePdfUrl}}\"\n}"
+            }
+          }
+        },
+        {
+          "name": "PDF — informe real (reemplazar pdfUrl) — test mode",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": { "raw": "{{baseUrl}}{{webhookPathPdfTest}}", "host": ["{{baseUrl}}{{webhookPathPdfTest}}"] },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-C2-PDF-TEST-002\",\n  \"pdfUrl\": \"https://REEMPLAZAR_CON_URL_DE_TU_INFORME_CLINICO.pdf\"\n}"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

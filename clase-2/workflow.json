@@ -1,0 +1,733 @@
+{
+  "id": "healthcare-triage-c2",
+  "name": "Healthcare AI Automation - Clase 2 (parametrización + LlamaCloud + observabilidad)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 🏥 Healthcare AI Automation — Clase 2\n\n**Extensiones respecto de clase 1:**\n\n- 📄 **Rama PDF**: ingesta vía LlamaCloud (PDF → Markdown → campos)\n- 🎯 **Parametrización**: `temperature: 0.2` + `top_p: 0.9` + few-shot (2 ejemplos)\n- ✅ **Output schema validator**: JSON Schema manual — si no cumple, va al fallback\n- 📊 **Observabilidad**: log estructurado con latencia, tokens, priority, schemaValid\n- 🚨 **Alerta**: webhook disparado ante fallback, latencia alta u override\n\n### 🧪 Probar\n\n```bash\n# JSON directo\ncurl -X POST http://localhost:5679/webhook/patient-analysis \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"patientId\":\"P-1\",\"age\":67,\"symptoms\":\"dolor toracico\",\"vitals\":{\"spo2\":91}}'\n\n# Vía PDF (pasar URL pública)\ncurl -X POST http://localhost:5679/webhook/patient-analysis-pdf \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"patientId\":\"P-2\",\"pdfUrl\":\"https://...informe.pdf\"}'\n```",
+        "height": 540,
+        "width": 440,
+        "color": 7
+      },
+      "id": "note-intro",
+      "name": "📘 Documentación",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-380, 180]
+    },
+    {
+      "parameters": {
+        "content": "## ⚙️ SETUP REQUERIDO\n\n**1. Credentials**\n\nNo hace falta crear credentials en la UI — el workflow usa `$env.OPENROUTER_API_KEY` y `$env.LLAMA_CLOUD_API_KEY` directo desde docker-compose.\n\n**2. Variables de entorno (.env)**\n- `OPENROUTER_API_KEY`\n- `LLAMA_CLOUD_API_KEY`\n- `NOTIFICATION_WEBHOOK_URL`\n- `ALERT_WEBHOOK_URL` (puede ser el mismo que el de notificación)\n\n**3. Endpoints**\n- `POST /webhook/patient-analysis` → JSON directo\n- `POST /webhook/patient-analysis-pdf` → `{patientId, pdfUrl}`\n\n**4. Activar el workflow** (toggle superior derecho)",
+        "height": 440,
+        "width": 420,
+        "color": 6
+      },
+      "id": "note-setup",
+      "name": "⚙️ Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [80, -280]
+    },
+    {
+      "parameters": {
+        "content": "## 📄 Rama PDF → LlamaCloud\n\n**Flujo:**\n1. Webhook recibe `{patientId, pdfUrl}`\n2. Upload a LlamaCloud `/parsing/upload` (URL mode)\n3. Wait 8s (tiempo promedio de parseo)\n4. GET `/parsing/job/{id}/result/markdown`\n5. Extracción de campos con regex simples\n6. Converge con la rama JSON en `Validar Input`\n\n**Cuándo usar LlamaCloud:**\n- PDFs con tablas (resultados de laboratorio)\n- Documentos escaneados (OCR)\n- Informes estructurados en múltiples columnas\n\n**Tier free**: ~1000 páginas/mes.",
+        "height": 380,
+        "width": 380,
+        "color": 4
+      },
+      "id": "note-pdf",
+      "name": "📝 Nota PDF",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [560, -280]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "patient-analysis-pdf",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-pdf",
+      "name": "📄 Webhook PDF",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [180, 120],
+      "webhookId": "patient-analysis-pdf-demo"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cloud.llamaindex.ai/api/v1/parsing/upload",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.LLAMA_CLOUD_API_KEY }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "name": "input_url",
+              "value": "={{ $json.body.pdfUrl || $json.pdfUrl }}"
+            },
+            {
+              "name": "result_type",
+              "value": "markdown"
+            },
+            {
+              "name": "language",
+              "value": "es"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "llama-upload",
+      "name": "☁️ LlamaCloud Upload",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [400, 120],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "notes": "Sube el PDF a LlamaCloud para parseo asincrónico.\nResponde con un jobId que después se pollea.\nSi falla, el 'Parse Markdown' lo detecta y envía error al flujo."
+    },
+    {
+      "parameters": {
+        "amount": 8,
+        "unit": "seconds"
+      },
+      "id": "wait-parsing",
+      "name": "⏳ Wait 8s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [620, 120],
+      "webhookId": "wait-llamacloud"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.cloud.llamaindex.ai/api/v1/parsing/job/{{ $json.id }}/result/markdown",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.LLAMA_CLOUD_API_KEY }}"
+            },
+            {
+              "name": "Accept",
+              "value": "application/json"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "llama-poll",
+      "name": "📥 Obtener Markdown",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [840, 120],
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput",
+      "notes": "Si el job aún está en PENDING, LlamaCloud devuelve 400.\nEl retry da 5 intentos con 3s entre cada uno → hasta 15s extra de margen."
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// EXTRACCIÓN DE CAMPOS DESDE MARKDOWN\n// ═══════════════════════════════════════\n// LlamaCloud nos devolvió el PDF como markdown.\n// Acá extraemos los campos con regex simples para armar\n// el mismo shape que viene por el webhook JSON.\n// Didácticamente: en producción usaríamos un LLM de extracción\n// o un esquema más robusto (p.ej. LlamaExtract).\n\nconst incoming = $input.first().json;\nconst markdown = incoming?.markdown || incoming?.result || '';\nconst pdfInput = $('📄 Webhook PDF').first().json.body || $('📄 Webhook PDF').first().json;\n\nif (!markdown) {\n  return [{\n    json: {\n      patientId: pdfInput.patientId || 'unknown',\n      symptoms: null,\n      parseError: 'No se pudo obtener markdown de LlamaCloud',\n      source: 'pdf-llamacloud-failed'\n    }\n  }];\n}\n\nfunction extractField(md, labels) {\n  for (const label of labels) {\n    const re = new RegExp(`\\\\*?\\\\*?${label}\\\\*?\\\\*?\\\\s*[:\\\\-]\\\\s*([^\\\\n|]+)`, 'i');\n    const m = md.match(re);\n    if (m) return m[1].trim().replace(/\\*+/g, '').replace(/\\|.*$/, '').trim();\n  }\n  return null;\n}\n\nfunction extractNumber(text) {\n  if (!text) return null;\n  const m = String(text).match(/(\\d+(?:[.,]\\d+)?)/);\n  return m ? Number(m[1].replace(',', '.')) : null;\n}\n\nconst age = extractNumber(extractField(markdown, ['edad', 'age']));\nconst symptoms = extractField(markdown, ['síntomas', 'sintomas', 'symptoms', 'motivo de consulta', 'motivo']);\nconst bp = extractField(markdown, ['presión arterial', 'presion arterial', 'ta', 'tension arterial', 'blood pressure']);\nconst hr = extractNumber(extractField(markdown, ['frecuencia cardíaca', 'frecuencia cardiaca', 'fc', 'heart rate', 'hr']));\nconst spo2 = extractNumber(extractField(markdown, ['saturación', 'saturacion', 'spo2', 'sat o2']));\nconst temp = extractNumber(extractField(markdown, ['temperatura', 'temp']));\n\nconst vitals = {};\nif (bp) vitals.bp = bp;\nif (hr != null) vitals.hr = hr;\nif (spo2 != null) vitals.spo2 = spo2;\nif (temp != null) vitals.temp = temp;\n\nreturn [{\n  json: {\n    patientId: pdfInput.patientId || 'pdf-' + Date.now(),\n    age,\n    symptoms: symptoms || 'Ver informe adjunto (no se pudo extraer síntomas explícitos)',\n    vitals,\n    _pdfMarkdownPreview: markdown.slice(0, 400),\n    source: 'pdf-llamacloud'\n  }\n}];"
+      },
+      "id": "parse-markdown",
+      "name": "📝 Extraer Campos Markdown",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1060, 120]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "patient-analysis",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "🩺 Webhook - Datos Paciente",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [180, 600],
+      "webhookId": "patient-analysis-demo"
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// VALIDACIÓN + ANONIMIZACIÓN + INICIO DE TRACKING\n// ═══════════════════════════════════════\n\nconst input = $input.first().json.body || $input.first().json;\n\nconst required = ['patientId', 'symptoms'];\nconst missing = required.filter(f => !input[f]);\n\nif (missing.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      error: `Campos faltantes: ${missing.join(', ')}`,\n      statusCode: 400\n    }\n  }];\n}\n\nconst hashId = (id) => {\n  let h = 0;\n  for (let i = 0; i < String(id).length; i++) {\n    h = ((h << 5) - h) + String(id).charCodeAt(i);\n  }\n  return 'hash_' + Math.abs(h).toString(36);\n};\n\nconst vitals = input.vitals || {};\nconst bpSystolic = vitals.bp ? parseInt(String(vitals.bp).split('/')[0]) : null;\n\nconst hasCriticalVitals = (\n  (vitals.spo2 != null && vitals.spo2 < 92) ||\n  (vitals.hr != null && (vitals.hr > 110 || vitals.hr < 50)) ||\n  (bpSystolic != null && bpSystolic > 170) ||\n  (vitals.temp != null && vitals.temp >= 39)\n);\n\nreturn [{\n  json: {\n    valid: true,\n    patientHash: hashId(input.patientId),\n    age: input.age || null,\n    symptoms: String(input.symptoms).trim(),\n    vitals,\n    hasCriticalVitals,\n    timestamp: new Date().toISOString(),\n    startedAtMs: Date.now(),\n    inputSource: input.source || 'webhook-json'\n  }\n}];"
+      },
+      "id": "validate-input",
+      "name": "✅ Validar Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1360, 380]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "valid-check",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "❓ ¿Input válido?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1580, 380]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: $json.error, statusCode: 400 } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-error",
+      "name": "❌ Respuesta de Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1800, 580]
+    },
+    {
+      "parameters": {
+        "content": "## 🔍 Búsqueda Semántica\n\n**Simulación educativa (idéntica a clase 1):**\n\n- 6 protocolos clínicos en memoria\n- Embedding bag-of-words hashed (128 dim)\n- Cosine similarity\n- Top-3 → contexto para la IA\n\n**En producción:** Pinecone / Qdrant / pgvector + embeddings reales (OpenAI, Cohere, BGE).",
+        "height": 300,
+        "width": 340,
+        "color": 4
+      },
+      "id": "note-embeddings",
+      "name": "📝 Nota Embeddings",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1780, -60]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// BÚSQUEDA SEMÁNTICA (SIMULADA)\n// ═══════════════════════════════════════\n\nconst input = $input.first().json;\n\nconst clinicalDocs = [\n  {\n    id: 'doc-001',\n    title: 'Protocolo Síndrome Coronario Agudo',\n    content: 'El dolor toracico opresivo irradiado a brazo izquierdo con disnea sugiere infarto agudo de miocardio. Actuar en ventana dorada menor a 90 minutos. Solicitar ECG, troponinas, activar hemodinamia.',\n    specialty: 'cardiologia',\n    urgency: 'critica'\n  },\n  {\n    id: 'doc-002',\n    title: 'Manejo de Crisis Hipertensiva',\n    content: 'Presion arterial mayor a 180/120 con sintomas como cefalea intensa, vision borrosa o dolor toracico indica emergencia hipertensiva. Descenso controlado de PA 20 por ciento primera hora.',\n    specialty: 'cardiologia',\n    urgency: 'alta'\n  },\n  {\n    id: 'doc-003',\n    title: 'Evaluación de Disnea Aguda',\n    content: 'Dificultad respiratoria con saturacion menor a 92 por ciento requiere oxigenoterapia inmediata. Diagnosticos diferenciales TEP, neumonia, insuficiencia cardiaca, broncoespasmo.',\n    specialty: 'neumologia',\n    urgency: 'alta'\n  },\n  {\n    id: 'doc-004',\n    title: 'Protocolo Sepsis Temprana',\n    content: 'Fiebre con taquicardia e hipotension en contexto de infeccion. Aplicar qSOFA. Bundle de sepsis cultivos, lactato, antibioticos en primera hora, fluidos cristaloides.',\n    specialty: 'infectologia',\n    urgency: 'critica'\n  },\n  {\n    id: 'doc-005',\n    title: 'Cefalea de Alarma - Red Flags',\n    content: 'Cefalea subita intensa thunderclap, focalidad neurologica, fiebre, trauma craneal reciente o mayor a 50 años. Descartar HSA, meningitis, tumor. TC de cerebro urgente.',\n    specialty: 'neurologia',\n    urgency: 'alta'\n  },\n  {\n    id: 'doc-006',\n    title: 'Consulta General - Baja Complejidad',\n    content: 'Sintomas leves sin signos de alarma. Evaluacion ambulatoria estandar, seguimiento por medico de cabecera. Educar sobre signos de empeoramiento.',\n    specialty: 'clinica',\n    urgency: 'baja'\n  }\n];\n\nfunction embed(text) {\n  const vec = new Array(128).fill(0);\n  const words = String(text).toLowerCase()\n    .replace(/[^a-záéíóúñ ]/g, ' ')\n    .split(/\\s+/)\n    .filter(w => w.length > 2);\n  words.forEach(w => {\n    for (let i = 0; i < w.length; i++) {\n      vec[(w.charCodeAt(i) * 31 + i) % 128] += 1;\n    }\n  });\n  const mag = Math.sqrt(vec.reduce((s, v) => s + v * v, 0));\n  return mag > 0 ? vec.map(v => v / mag) : vec;\n}\n\nfunction cosineSim(a, b) {\n  return a.reduce((s, v, i) => s + v * b[i], 0);\n}\n\nconst queryVec = embed(input.symptoms);\n\nconst ranked = clinicalDocs\n  .map(doc => ({\n    ...doc,\n    similarity: +cosineSim(queryVec, embed(doc.content + ' ' + doc.title)).toFixed(4)\n  }))\n  .sort((a, b) => b.similarity - a.similarity)\n  .slice(0, 3);\n\nreturn [{\n  json: {\n    ...input,\n    relevantDocs: ranked,\n    topDocContext: ranked.map(d => `[${d.title}]: ${d.content}`).join('\\n\\n')\n  }\n}];"
+      },
+      "id": "semantic-search",
+      "name": "🔍 Búsqueda Semántica",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1800, 380]
+    },
+    {
+      "parameters": {
+        "content": "## 🎯 Parametrización avanzada\n\n**Configuración:**\n- `temperature: 0.2` → determinismo clínico\n- `top_p: 0.9` → coherencia sin perder naturalidad\n- `max_tokens: 500` → respuestas acotadas\n\n**Few-shot en el prompt:**\nIncluye 2 ejemplos (un caso P1 crítico y un caso P4 leve) que le muestran al modelo el **formato exacto** y el **criterio clínico esperado**.\n\nComparado con clase 1 (zero-shot), la consistencia del JSON mejora sensiblemente — sobre todo cuando el modelo está tentado a devolver markdown.",
+        "height": 380,
+        "width": 380,
+        "color": 3
+      },
+      "id": "note-params",
+      "name": "📝 Nota Parametrización",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [2180, -60]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "HTTP-Referer",
+              "value": "http://localhost:5679"
+            },
+            {
+              "name": "X-Title",
+              "value": "Healthcare AI Triage - Clase 2"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'google/gemini-2.0-flash-001',\n  temperature: 0.2,\n  top_p: 0.9,\n  max_tokens: 500,\n  messages: [\n    {\n      role: 'system',\n      content: 'Sos un asistente clínico que hace triage preliminar. Tu respuesta DEBE ser EXCLUSIVAMENTE un objeto JSON válido, sin markdown, sin texto extra, sin comentarios.\\n\\nFormato obligatorio:\\n{\\n  \"analysis\": \"análisis clínico breve en 1-2 oraciones\",\\n  \"urgency\": \"critica\" | \"alta\" | \"media\" | \"baja\",\\n  \"recommendedAction\": \"acción recomendada concreta\",\\n  \"differentialDiagnosis\": [\"diagnóstico 1\", \"diagnóstico 2\", \"diagnóstico 3\"]\\n}\\n\\nNO reemplazás el criterio médico profesional.\\n\\n--- EJEMPLOS ---\\n\\nEjemplo 1 (caso crítico):\\nInput: paciente 67 años, dolor toracico opresivo con disnea e irradiacion a brazo izquierdo, SpO2 91, HR 115, TA 180/110.\\nOutput:\\n{\"analysis\":\"Cuadro compatible con síndrome coronario agudo: dolor opresivo, irradiación, disnea y vitales inestables (hipoxemia, taquicardia, HTA).\",\"urgency\":\"critica\",\"recommendedAction\":\"Activar código infarto. ECG y troponinas inmediatos. Derivar a hemodinamia en ventana dorada <90 min.\",\"differentialDiagnosis\":[\"Infarto agudo de miocardio\",\"Disección aórtica\",\"Tromboembolismo pulmonar\"]}\\n\\nEjemplo 2 (caso leve):\\nInput: paciente 32 años, dolor de garganta leve, congestion nasal, sin fiebre, HR 72, SpO2 98.\\nOutput:\\n{\"analysis\":\"Cuadro compatible con infección de vía aérea superior de baja complejidad, sin signos de alarma ni alteración vital.\",\"urgency\":\"baja\",\"recommendedAction\":\"Manejo sintomático ambulatorio. Consulta con médico de cabecera si los síntomas persisten >5 días o aparece fiebre alta.\",\"differentialDiagnosis\":[\"Rinofaringitis viral\",\"Faringitis aguda\",\"Rinitis alérgica\"]}'\n    },\n    {\n      role: 'user',\n      content: 'CONTEXTO CLÍNICO RELEVANTE:\\n' + $json.topDocContext + '\\n\\nPACIENTE:\\n- Edad: ' + $json.age + '\\n- Síntomas: ' + $json.symptoms + '\\n- Signos vitales: ' + JSON.stringify($json.vitals) + '\\n- Vitales críticos detectados: ' + $json.hasCriticalVitals + '\\n\\nDevolvé ÚNICAMENTE el JSON siguiendo el formato de los ejemplos.'\n    }\n  ]\n}) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "openrouter-analysis",
+      "name": "🤖 Análisis IA (OpenRouter)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2200, 380],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "notes": "Modelo: google/gemini-2.0-flash-001\nParámetros:\n  temperature: 0.2\n  top_p: 0.9\n  max_tokens: 500\n\nPrompt: few-shot con 2 ejemplos (P1 y P4).\nRetry 3x / timeout 10s / continueOnFail."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "ai-ok",
+              "leftValue": "={{ $json.choices && $json.choices[0] && $json.choices[0].message && $json.choices[0].message.content ? 'ok' : '' }}",
+              "rightValue": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-ai-success",
+      "name": "❓ ¿IA respondió OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [2440, 380]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// PARSER ROBUSTO DE RESPUESTA IA\n// ═══════════════════════════════════════\n// Maneja: JSON directo, markdown code fences, texto extra.\n// La validación de schema se hace en el siguiente nodo.\n\nconst aiData = $input.first().json;\nconst previousData = $('🔍 Búsqueda Semántica').first().json;\n\nfunction extractJson(text) {\n  if (text == null) return null;\n  if (typeof text === 'object') return text;\n  if (typeof text !== 'string') return null;\n  try { return JSON.parse(text); } catch (e) {}\n  const cleaned = text\n    .replace(/^```(?:json)?\\s*/i, '')\n    .replace(/\\s*```\\s*$/, '')\n    .trim();\n  try { return JSON.parse(cleaned); } catch (e) {}\n  const match = text.match(/\\{[\\s\\S]*\\}/);\n  if (match) {\n    try { return JSON.parse(match[0]); } catch (e) {}\n  }\n  return null;\n}\n\nconst content = aiData?.choices?.[0]?.message?.content;\nconst parsed = extractJson(content);\n\nreturn [{\n  json: {\n    ...previousData,\n    aiAnalysis: parsed,\n    parseSucceeded: parsed != null,\n    source: 'openrouter-gemini-2.0-flash',\n    tokensUsed: aiData?.usage?.total_tokens || 0,\n    rawContent: content\n  }\n}];"
+      },
+      "id": "parse-ai-response",
+      "name": "📝 Parsear Respuesta IA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2660, 260]
+    },
+    {
+      "parameters": {
+        "content": "## ✅ Output Schema Validator\n\n**Schema JSON esperado:**\n```json\n{\n  \"analysis\": \"string (≥1 char)\",\n  \"urgency\": \"enum: critica|alta|media|baja\",\n  \"recommendedAction\": \"string (≥1 char)\",\n  \"differentialDiagnosis\": \"array de strings\"\n}\n```\n\n**Qué pasa si no valida:**\n- Se rutea al `Fallback Reglas`\n- El log queda con `schemaValid: false`\n- Se dispara alerta de observabilidad\n\n**Por qué validar aparte del parser:**\n1. JSON válido ≠ JSON correcto (podría faltar un campo)\n2. Permite auditar cuántas veces la IA rompe el contrato\n3. Es el lugar natural para hacer assertions regulatorias",
+        "height": 440,
+        "width": 360,
+        "color": 5
+      },
+      "id": "note-schema",
+      "name": "📝 Nota Schema",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [2880, -100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// VALIDACIÓN DE OUTPUT SCHEMA\n// ═══════════════════════════════════════\n// JSON Schema manual. Si falla, marca schemaValid=false\n// y el IF siguiente lo rutea al fallback.\n\nconst d = $input.first().json;\nconst a = d.aiAnalysis;\n\nconst errors = [];\n\nif (!d.parseSucceeded || !a || typeof a !== 'object') {\n  errors.push('aiAnalysis no es un objeto JSON válido');\n}\n\nif (a) {\n  if (typeof a.analysis !== 'string' || a.analysis.trim().length === 0) {\n    errors.push('analysis debe ser string no vacío');\n  }\n  const validUrgency = ['critica', 'alta', 'media', 'baja'];\n  const urgencyNormalized = String(a.urgency || '').toLowerCase()\n    .replace('crítica', 'critica').replace('critical', 'critica')\n    .replace('high', 'alta').replace('medium', 'media').replace('moderada', 'media')\n    .replace('low', 'baja');\n  if (!validUrgency.includes(urgencyNormalized)) {\n    errors.push(`urgency debe ser uno de: ${validUrgency.join(', ')} (recibido: ${a.urgency})`);\n  }\n  if (typeof a.recommendedAction !== 'string' || a.recommendedAction.trim().length === 0) {\n    errors.push('recommendedAction debe ser string no vacío');\n  }\n  if (!Array.isArray(a.differentialDiagnosis)) {\n    errors.push('differentialDiagnosis debe ser array');\n  } else if (!a.differentialDiagnosis.every(x => typeof x === 'string')) {\n    errors.push('differentialDiagnosis debe ser array de strings');\n  }\n  a.urgency = urgencyNormalized;\n}\n\nconst schemaValid = errors.length === 0;\n\nreturn [{\n  json: {\n    ...d,\n    schemaValid,\n    schemaErrors: errors\n  }\n}];"
+      },
+      "id": "validate-schema",
+      "name": "✅ Validar Output Schema",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2880, 260]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "schema-check",
+              "leftValue": "={{ $json.schemaValid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-schema-valid",
+      "name": "❓ ¿Schema válido?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [3100, 260]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// NORMALIZADOR POST-SCHEMA (happy path)\n// ═══════════════════════════════════════\n// El schema validó OK. Armamos el shape final que consume\n// la Clasificación de Riesgo.\n\nconst d = $input.first().json;\n\nreturn [{\n  json: {\n    patientHash: d.patientHash,\n    age: d.age,\n    symptoms: d.symptoms,\n    vitals: d.vitals,\n    hasCriticalVitals: d.hasCriticalVitals,\n    relevantDocs: d.relevantDocs,\n    startedAtMs: d.startedAtMs,\n    inputSource: d.inputSource,\n    aiAnalysis: {\n      analysis: d.aiAnalysis.analysis,\n      urgency: d.aiAnalysis.urgency,\n      recommendedAction: d.aiAnalysis.recommendedAction,\n      differentialDiagnosis: d.aiAnalysis.differentialDiagnosis\n    },\n    source: d.source,\n    fallbackUsed: false,\n    schemaValid: true,\n    schemaErrors: [],\n    tokensUsed: d.tokensUsed\n  }\n}];"
+      },
+      "id": "normalize-ok",
+      "name": "🧩 Normalizar (OK)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3320, 160]
+    },
+    {
+      "parameters": {
+        "content": "## 🛡️ Política de Fallback\n\n**Tres disparadores:**\n\n1. IA no respondió (timeout, 5xx)\n2. IA respondió pero no pudo parsearse como JSON\n3. **IA respondió JSON válido pero no cumple schema** ← nuevo en clase 2\n\nEl fallback siempre produce el mismo shape de salida, asegurando que el resto del flujo no rompa.",
+        "height": 300,
+        "width": 340,
+        "color": 3
+      },
+      "id": "note-fallback",
+      "name": "📝 Nota Fallback",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [3300, 620]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// FALLBACK: ANÁLISIS BASADO EN REGLAS\n// ═══════════════════════════════════════\n// Se activa si:\n//   (a) la IA no respondió,\n//   (b) no se pudo parsear el JSON, o\n//   (c) el JSON no cumple el schema.\n\nconst data = $('🔍 Búsqueda Semántica').first().json;\n\n// Detección del motivo (best-effort, para logging)\nlet fallbackReason = 'ai-request-failed';\ntry {\n  const maybeParsed = $('📝 Parsear Respuesta IA')?.first()?.json;\n  if (maybeParsed) {\n    if (!maybeParsed.parseSucceeded) fallbackReason = 'json-parse-failed';\n    else fallbackReason = 'schema-invalid';\n  }\n} catch (e) { /* el nodo de parse no corrió */ }\n\nlet schemaErrors = [];\ntry {\n  const maybeValidated = $('✅ Validar Output Schema')?.first()?.json;\n  if (maybeValidated?.schemaErrors) schemaErrors = maybeValidated.schemaErrors;\n} catch (e) {}\n\nlet urgency = 'media';\nlet recommendedAction = 'Evaluación médica presencial';\n\nif (data.hasCriticalVitals) {\n  urgency = 'critica';\n  recommendedAction = '🚨 Activar protocolo de emergencia. Derivar a guardia inmediatamente.';\n} else if (data.relevantDocs[0]?.urgency === 'critica') {\n  urgency = 'alta';\n  recommendedAction = `Evaluación urgente. Consultar protocolo: ${data.relevantDocs[0].title}`;\n} else if (data.relevantDocs[0]?.urgency === 'alta') {\n  urgency = 'alta';\n  recommendedAction = 'Derivar a guardia dentro de las próximas 2 horas';\n} else {\n  urgency = 'baja';\n  recommendedAction = 'Consulta programada con médico de cabecera';\n}\n\nreturn [{\n  json: {\n    patientHash: data.patientHash,\n    age: data.age,\n    symptoms: data.symptoms,\n    vitals: data.vitals,\n    hasCriticalVitals: data.hasCriticalVitals,\n    relevantDocs: data.relevantDocs,\n    startedAtMs: data.startedAtMs,\n    inputSource: data.inputSource,\n    aiAnalysis: {\n      analysis: `FALLBACK (${fallbackReason}): top match con \"${data.relevantDocs[0]?.title}\" (similitud ${data.relevantDocs[0]?.similarity}).`,\n      urgency,\n      recommendedAction,\n      differentialDiagnosis: data.relevantDocs.map(d => d.title)\n    },\n    source: 'fallback-rules-engine',\n    fallbackUsed: true,\n    fallbackReason,\n    schemaValid: false,\n    schemaErrors,\n    tokensUsed: 0\n  }\n}];"
+      },
+      "id": "fallback-response",
+      "name": "⚠️ Fallback (Reglas)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3320, 440]
+    },
+    {
+      "parameters": {
+        "content": "## 📊 Clasificación y SLA\n\n| Prioridad | Urgencia IA | SLA |\n|-----------|-------------|-----|\n| P1 | Crítica | 5 min |\n| P2 | Alta | 30 min |\n| P3 | Media | 2 hs |\n| P4 | Baja | 24 hs |\n\n**Override por vitales críticos:** SpO2<92, HR<50 o HR>110, TAs>170, temp≥39 → fuerza prioridad mínima P2.",
+        "height": 320,
+        "width": 320,
+        "color": 5
+      },
+      "id": "note-classification",
+      "name": "📝 Nota Clasificación",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [3680, -60]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// CLASIFICACIÓN FINAL + PRIORIZACIÓN\n// ═══════════════════════════════════════\n\nconst d = $input.first().json;\n\nconst urgencyScore = { critica: 4, alta: 3, media: 2, baja: 1 };\n\nlet aiScore = urgencyScore[d.aiAnalysis.urgency] || 2;\n\nif (d.hasCriticalVitals && aiScore < 3) aiScore = 3;\n\nconst priority =\n  aiScore >= 4 ? 'P1_CRITICAL' :\n  aiScore === 3 ? 'P2_HIGH' :\n  aiScore === 2 ? 'P3_MEDIUM' : 'P4_LOW';\n\nconst slaMinutes =\n  priority === 'P1_CRITICAL' ? 5 :\n  priority === 'P2_HIGH' ? 30 :\n  priority === 'P3_MEDIUM' ? 120 : 1440;\n\nreturn [{\n  json: {\n    ...d,\n    triage: {\n      priority,\n      urgency: d.aiAnalysis.urgency,\n      slaMinutes,\n      slaDeadline: new Date(Date.now() + slaMinutes * 60000).toISOString(),\n      overrideApplied: d.hasCriticalVitals && urgencyScore[d.aiAnalysis.urgency] < 3\n    }\n  }\n}];"
+      },
+      "id": "risk-classification",
+      "name": "📊 Clasificación Riesgo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3700, 380]
+    },
+    {
+      "parameters": {
+        "content": "## 📊 Observabilidad\n\n**Log estructurado** (stdout del contenedor):\n\n```json\n{\n  \"event\": \"triage\",\n  \"ts\": \"2026-04-21T19:05:12Z\",\n  \"patientHash\": \"hash_xxx\",\n  \"priority\": \"P1_CRITICAL\",\n  \"urgency\": \"critica\",\n  \"latencyMs\": 1243,\n  \"tokens\": 312,\n  \"fallbackUsed\": false,\n  \"schemaValid\": true,\n  \"overrideApplied\": false,\n  \"inputSource\": \"webhook-json\"\n}\n```\n\n**Alerta** se dispara si:\n- `fallbackUsed = true` (IA falló o schema inválido)\n- `latencyMs > 8000` (procesamiento lento)\n- `overrideApplied = true` (el modelo infraestimó la urgencia)\n\nPara dashboards reales se loguea a Loki/Datadog/CloudWatch.",
+        "height": 500,
+        "width": 380,
+        "color": 2
+      },
+      "id": "note-observability",
+      "name": "📝 Nota Observabilidad",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [4040, -80]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// LOG ESTRUCTURADO + MÉTRICAS\n// ═══════════════════════════════════════\n// Genera una línea de log JSON por ejecución.\n// En prod iría a un sink (Loki, Datadog, CloudWatch).\n// Acá la imprimimos al stdout del contenedor y la\n// propagamos para que el nodo de alerta la use.\n\nconst d = $input.first().json;\nconst now = Date.now();\nconst latencyMs = d.startedAtMs ? (now - d.startedAtMs) : null;\n\nconst logEntry = {\n  event: 'triage_completed',\n  ts: new Date(now).toISOString(),\n  patientHash: d.patientHash,\n  priority: d.triage.priority,\n  urgency: d.triage.urgency,\n  slaMinutes: d.triage.slaMinutes,\n  latencyMs,\n  tokensUsed: d.tokensUsed,\n  fallbackUsed: d.fallbackUsed === true,\n  fallbackReason: d.fallbackReason || null,\n  schemaValid: d.schemaValid !== false,\n  schemaErrors: d.schemaErrors || [],\n  overrideApplied: d.triage.overrideApplied === true,\n  inputSource: d.inputSource || 'webhook-json',\n  source: d.source\n};\n\n// Imprimir al stdout — aparece en `docker logs n8n-dev-c2`\nconsole.log('[TRIAGE_LOG] ' + JSON.stringify(logEntry));\n\n// Criterios de alerta\nconst shouldAlert = (\n  logEntry.fallbackUsed === true ||\n  (latencyMs != null && latencyMs > 8000) ||\n  logEntry.overrideApplied === true\n);\n\nreturn [{\n  json: {\n    ...d,\n    log: logEntry,\n    shouldAlert\n  }\n}];"
+      },
+      "id": "structured-log",
+      "name": "📊 Log Estructurado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [3920, 380]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "alert-check",
+              "leftValue": "={{ $json.shouldAlert }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-alert",
+      "name": "❓ ¿Alerta?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [4140, 380]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.ALERT_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Alert-Type",
+              "value": "triage-anomaly"
+            },
+            {
+              "name": "X-Priority",
+              "value": "={{ $json.triage.priority }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  alert: true,\n  reasons: [\n    $json.fallbackUsed ? ('fallback:' + ($json.fallbackReason || 'unknown')) : null,\n    ($json.log.latencyMs != null && $json.log.latencyMs > 8000) ? ('latency_high:' + $json.log.latencyMs + 'ms') : null,\n    $json.triage.overrideApplied ? 'override_applied' : null\n  ].filter(Boolean),\n  log: $json.log,\n  patientHash: $json.patientHash\n}) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "send-alert",
+      "name": "🚨 Enviar Alerta",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4360, 260],
+      "retryOnFail": false,
+      "onError": "continueRegularOutput",
+      "notes": "Alerta a webhook externo. Si falla NO rompe el flujo principal (el triage ya se hizo)."
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NOTIFICATION_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Priority",
+              "value": "={{ $json.triage.priority }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  event: 'patient_triage_completed',\n  priority: $json.triage.priority,\n  slaMinutes: $json.triage.slaMinutes,\n  slaDeadline: $json.triage.slaDeadline,\n  overrideApplied: $json.triage.overrideApplied,\n  patientHash: $json.patientHash,\n  urgency: $json.aiAnalysis.urgency,\n  recommendedAction: $json.aiAnalysis.recommendedAction,\n  analysis: $json.aiAnalysis.analysis,\n  differentialDiagnosis: $json.aiAnalysis.differentialDiagnosis,\n  source: $json.source,\n  fallbackUsed: $json.fallbackUsed,\n  schemaValid: $json.schemaValid,\n  tokensUsed: $json.tokensUsed,\n  latencyMs: $json.log.latencyMs,\n  timestamp: $now.toISO()\n}) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "send-notification",
+      "name": "📨 Notificación",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [4360, 480],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "onError": "continueRegularOutput",
+      "notes": "URL: $env.NOTIFICATION_WEBHOOK_URL\nSi falla NO rompe el flujo — el triage ya se hizo."
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  success: true,\n  triage: $('📊 Clasificación Riesgo').first().json.triage,\n  analysis: $('📊 Clasificación Riesgo').first().json.aiAnalysis,\n  source: $('📊 Clasificación Riesgo').first().json.source,\n  fallbackUsed: $('📊 Clasificación Riesgo').first().json.fallbackUsed,\n  schemaValid: $('📊 Clasificación Riesgo').first().json.schemaValid,\n  tokensUsed: $('📊 Clasificación Riesgo').first().json.tokensUsed,\n  log: $('📊 Log Estructurado').first().json.log,\n  relevantProtocols: $('📊 Clasificación Riesgo').first().json.relevantDocs.map(d => ({ id: d.id, title: d.title, similarity: d.similarity }))\n} }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "📤 Respuesta OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [4580, 480]
+    },
+    {
+      "parameters": {
+        "content": "## 🔒 Privacidad & Regulación\n\n**Decisiones heredadas de clase 1:**\n1. Hashing de patientId antes de propagar\n2. No logging de síntomas completos en el log estructurado\n3. Timeout agresivo (10s) en el LLM\n4. Audit trail implícito vía ejecuciones de n8n\n\n**Nuevo en clase 2:**\n- ⚠️ Al usar LlamaCloud: el PDF sale de nuestra infra y va a servidores de LlamaIndex. En producción clínica se necesita BAA o usar parser on-premise.\n- ⚠️ El `_pdfMarkdownPreview` en el branch PDF expone primeros 400 chars — en prod habría que filtrar PII antes.\n- ✅ Schema validation refuerza la trazabilidad regulatoria.\n\n**Normativas aplicables (AR):**\n- Ley 26.529 (Derechos del Paciente)\n- Ley 25.326 (Protección Datos Personales)\n- Resolución 189/2018 MSAL (HCE)",
+        "height": 560,
+        "width": 420,
+        "color": 2
+      },
+      "id": "note-privacy",
+      "name": "📝 Nota Privacidad",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-380, 780]
+    }
+  ],
+  "connections": {
+    "🩺 Webhook - Datos Paciente": {
+      "main": [
+        [{ "node": "✅ Validar Input", "type": "main", "index": 0 }]
+      ]
+    },
+    "📄 Webhook PDF": {
+      "main": [
+        [{ "node": "☁️ LlamaCloud Upload", "type": "main", "index": 0 }]
+      ]
+    },
+    "☁️ LlamaCloud Upload": {
+      "main": [
+        [{ "node": "⏳ Wait 8s", "type": "main", "index": 0 }]
+      ]
+    },
+    "⏳ Wait 8s": {
+      "main": [
+        [{ "node": "📥 Obtener Markdown", "type": "main", "index": 0 }]
+      ]
+    },
+    "📥 Obtener Markdown": {
+      "main": [
+        [{ "node": "📝 Extraer Campos Markdown", "type": "main", "index": 0 }]
+      ]
+    },
+    "📝 Extraer Campos Markdown": {
+      "main": [
+        [{ "node": "✅ Validar Input", "type": "main", "index": 0 }]
+      ]
+    },
+    "✅ Validar Input": {
+      "main": [
+        [{ "node": "❓ ¿Input válido?", "type": "main", "index": 0 }]
+      ]
+    },
+    "❓ ¿Input válido?": {
+      "main": [
+        [{ "node": "🔍 Búsqueda Semántica", "type": "main", "index": 0 }],
+        [{ "node": "❌ Respuesta de Error", "type": "main", "index": 0 }]
+      ]
+    },
+    "🔍 Búsqueda Semántica": {
+      "main": [
+        [{ "node": "🤖 Análisis IA (OpenRouter)", "type": "main", "index": 0 }]
+      ]
+    },
+    "🤖 Análisis IA (OpenRouter)": {
+      "main": [
+        [{ "node": "❓ ¿IA respondió OK?", "type": "main", "index": 0 }]
+      ]
+    },
+    "❓ ¿IA respondió OK?": {
+      "main": [
+        [{ "node": "📝 Parsear Respuesta IA", "type": "main", "index": 0 }],
+        [{ "node": "⚠️ Fallback (Reglas)", "type": "main", "index": 0 }]
+      ]
+    },
+    "📝 Parsear Respuesta IA": {
+      "main": [
+        [{ "node": "✅ Validar Output Schema", "type": "main", "index": 0 }]
+      ]
+    },
+    "✅ Validar Output Schema": {
+      "main": [
+        [{ "node": "❓ ¿Schema válido?", "type": "main", "index": 0 }]
+      ]
+    },
+    "❓ ¿Schema válido?": {
+      "main": [
+        [{ "node": "🧩 Normalizar (OK)", "type": "main", "index": 0 }],
+        [{ "node": "⚠️ Fallback (Reglas)", "type": "main", "index": 0 }]
+      ]
+    },
+    "🧩 Normalizar (OK)": {
+      "main": [
+        [{ "node": "📊 Clasificación Riesgo", "type": "main", "index": 0 }]
+      ]
+    },
+    "⚠️ Fallback (Reglas)": {
+      "main": [
+        [{ "node": "📊 Clasificación Riesgo", "type": "main", "index": 0 }]
+      ]
+    },
+    "📊 Clasificación Riesgo": {
+      "main": [
+        [{ "node": "📊 Log Estructurado", "type": "main", "index": 0 }]
+      ]
+    },
+    "📊 Log Estructurado": {
+      "main": [
+        [{ "node": "❓ ¿Alerta?", "type": "main", "index": 0 }]
+      ]
+    },
+    "❓ ¿Alerta?": {
+      "main": [
+        [{ "node": "🚨 Enviar Alerta", "type": "main", "index": 0 }],
+        [{ "node": "📨 Notificación", "type": "main", "index": 0 }]
+      ]
+    },
+    "🚨 Enviar Alerta": {
+      "main": [
+        [{ "node": "📨 Notificación", "type": "main", "index": 0 }]
+      ]
+    },
+    "📨 Notificación": {
+      "main": [
+        [{ "node": "📤 Respuesta OK", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "2.2.0-clase2",
+  "meta": {
+    "templateCreatedBy": "Juanca - AI Automation"
+  },
+  "tags": [
+    { "name": "healthcare" },
+    { "name": "clase-2" },
+    { "name": "llamacloud" },
+    { "name": "openrouter" },
+    { "name": "observability" }
+  ]
+}
