@@ -1,0 +1,116 @@
+{
+  "name": "Concepto 02 — HTTP Request externo",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 📘 Concepto 02 — HTTP Request\n\nCómo n8n hace requests a APIs externas.\n\n1. **Webhook** recibe el POST del paciente\n2. **HTTP Request** reenvía los datos a un webhook externo (webhook.site)\n3. **Respond** avisa al cliente que ya se envió\n\n### 🧪 Probar\n\n```bash\ncurl -X POST http://localhost:5678/webhook/concepto-02 \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"patientId\":\"P-001\",\"symptoms\":\"dolor toracico\"}'\n```\n\nDespués abrí tu URL de webhook.site y ves el POST llegando.",
+        "height": 360,
+        "width": 380,
+        "color": 7
+      },
+      "id": "note-intro",
+      "name": "📘 Documentación",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-40, 60]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "concepto-02",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "🩺 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [380, 400],
+      "webhookId": "concepto-02"
+    },
+    {
+      "parameters": {
+        "content": "## 🌐 HTTP Request\n\n**Qué hace:** hace un POST a `$env.NOTIFICATION_WEBHOOK_URL`.\n\n**Parámetros clave:**\n- **method:** POST\n- **url:** `{{ $env.NOTIFICATION_WEBHOOK_URL }}` ← env var desde docker-compose\n- **sendHeaders:** true → agregás headers\n- **sendBody:** true + specifyBody: json → body JSON\n\n**Tip:** `$env.X` lee variables de entorno del container. No se loguean en el canvas (bueno para secretos).\n\n**Retry:** si falla, reintenta 2 veces con 2s entre intentos.",
+        "height": 360,
+        "width": 340,
+        "color": 4
+      },
+      "id": "note-http",
+      "name": "📝 Nota HTTP Request",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [660, 60]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NOTIFICATION_WEBHOOK_URL }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Source",
+              "value": "n8n-concepto-02"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  event: 'paciente_recibido',\n  ts: $now.toISO(),\n  patient: $json.body\n}) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "http-notify",
+      "name": "📨 HTTP Request — webhook externo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 400],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput",
+      "notes": "URL viene de $env.NOTIFICATION_WEBHOOK_URL (seteada en docker-compose desde el .env).\nSi querés cambiar el destino, editá el .env y reiniciá el container."
+    },
+    {
+      "parameters": {
+        "content": "## ✅ Respond\n\nResponde al cliente original confirmando que se hizo el POST al webhook externo.\n\n`$json` acá contiene la respuesta del HTTP Request anterior (que webhook.site responde con un UUID).",
+        "height": 220,
+        "width": 300,
+        "color": 4
+      },
+      "id": "note-respond",
+      "name": "📝 Nota Respond",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1060, 60]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  success: true,\n  message: 'POST enviado al webhook externo',\n  externalResponse: $json\n} }}",
+        "options": {}
+      },
+      "id": "respond-ok",
+      "name": "📤 Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1100, 400]
+    }
+  ],
+  "connections": {
+    "🩺 Webhook": {
+      "main": [[{ "node": "📨 HTTP Request — webhook externo", "type": "main", "index": 0 }]]
+    },
+    "📨 HTTP Request — webhook externo": {
+      "main": [[{ "node": "📤 Respond OK", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "conceptos" }, { "name": "http" }]
+}

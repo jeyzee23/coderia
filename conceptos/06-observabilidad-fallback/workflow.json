@@ -1,0 +1,231 @@
+{
+  "name": "Concepto 06 — Observabilidad + Fallback",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 📘 Concepto 06 — Observabilidad + Fallback\n\nDos cosas juntas porque ambas responden a *\"qué hacer cuando algo puede salir mal\"*:\n\n1. **Fallback:** si la IA falla (timeout, 5xx), clasificamos con reglas deterministas\n2. **Observabilidad:** logueamos cada ejecución con latencia, tokens, si usó fallback, etc.\n\n### 🧪 Probar\n\n```bash\ncurl -X POST http://localhost:5678/webhook/concepto-06 \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"age\":67,\"symptoms\":\"dolor toracico\",\"vitals\":{\"spo2\":91}}'\n```\n\nCon timeout bajo (1s) el LLM **casi siempre falla** → vas a ver el fallback activarse y el log con `fallbackUsed: true`.",
+        "height": 460,
+        "width": 420,
+        "color": 7
+      },
+      "id": "note-intro",
+      "name": "📘 Documentación",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-40, 60]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "concepto-06",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "🩺 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [420, 520],
+      "webhookId": "concepto-06"
+    },
+    {
+      "parameters": {
+        "content": "## ⏱️ startedAtMs\n\nGuarda `Date.now()` al inicio para poder medir la latencia al final.\n\nEste es el patrón clave de observabilidad: **marcar el inicio** para después saber cuánto tardó todo.",
+        "height": 220,
+        "width": 300,
+        "color": 4
+      },
+      "id": "note-start",
+      "name": "📝 Nota startedAtMs",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [700, 60]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// ARRANQUE — marcá el timestamp inicial\n// ═══════════════════════════════════════\n\nconst body = $input.first().json.body || {};\n\nreturn [{\n  json: {\n    age: body.age || null,\n    symptoms: body.symptoms || '',\n    vitals: body.vitals || {},\n    startedAtMs: Date.now()\n  }\n}];"
+      },
+      "id": "code-start",
+      "name": "⏱️ Start timer",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [740, 520]
+    },
+    {
+      "parameters": {
+        "content": "## 🤖 LLM con timeout bajo\n\n**Timeout: 1500ms** (a propósito, para forzar que falle seguido).\n\n**`onError: continueRegularOutput`** → si falla, el flujo NO se corta. Se sigue al IF.\n\nEn producción el timeout sería 10s + retry 3x.",
+        "height": 280,
+        "width": 320,
+        "color": 3
+      },
+      "id": "note-llm",
+      "name": "📝 Nota LLM",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1020, 60]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'google/gemini-2.0-flash-001',\n  temperature: 0.2,\n  max_tokens: 200,\n  messages: [\n    {\n      role: 'system',\n      content: 'Clasificá la urgencia como P1/P2/P3/P4. Devolvé SOLO JSON con {urgency, reasoning}.'\n    },\n    {\n      role: 'user',\n      content: 'Paciente edad ' + $json.age + ', síntomas: ' + $json.symptoms + ', vitales: ' + JSON.stringify($json.vitals)\n    }\n  ]\n}) }}",
+        "options": { "timeout": 1500 }
+      },
+      "id": "http-llm",
+      "name": "🤖 LLM (timeout corto)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1060, 520],
+      "onError": "continueRegularOutput",
+      "notes": "Timeout 1500ms para FORZAR fallos y ver el fallback en acción."
+    },
+    {
+      "parameters": {
+        "content": "## ❓ ¿IA OK?\n\nChequea si el LLM devolvió un `choices[0].message.content`. Si no, cayó en timeout → fallback.",
+        "height": 180,
+        "width": 280,
+        "color": 4
+      },
+      "id": "note-if-ai",
+      "name": "📝 Nota IF",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1380, 60]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "ai-ok",
+              "leftValue": "={{ $json.choices && $json.choices[0] && $json.choices[0].message && $json.choices[0].message.content ? 'ok' : '' }}",
+              "rightValue": "ok",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-ai-success",
+      "name": "❓ ¿IA OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1400, 520]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// HAPPY PATH — parsear respuesta del LLM\n// ═══════════════════════════════════════\n\nconst aiData = $input.first().json;\nconst inputData = $('⏱️ Start timer').first().json;\n\nconst content = aiData?.choices?.[0]?.message?.content || '';\n\nfunction tryParse(s) {\n  try { return JSON.parse(s); } catch (e) {}\n  const cleaned = s.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```\\s*$/, '').trim();\n  try { return JSON.parse(cleaned); } catch (e) {}\n  return { urgency: 'P3', reasoning: content.slice(0, 100) };\n}\n\nconst parsed = tryParse(content);\n\nreturn [{\n  json: {\n    ...inputData,\n    priority: parsed.urgency,\n    reasoning: parsed.reasoning,\n    fallbackUsed: false,\n    tokensUsed: aiData?.usage?.total_tokens || 0\n  }\n}];"
+      },
+      "id": "code-parse-ai",
+      "name": "📝 Parse IA",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1700, 380]
+    },
+    {
+      "parameters": {
+        "content": "## ⚠️ Fallback\n\n**Clasifica por reglas simples:**\n- `spo2 < 92` o `hr > 110` → P1\n- edad > 65 + cualquier síntoma → P2\n- else → P3\n\nProduce el MISMO shape que la rama IA (`priority`, `reasoning`). Por eso el resto del flujo no rompe.",
+        "height": 300,
+        "width": 340,
+        "color": 3
+      },
+      "id": "note-fallback",
+      "name": "📝 Nota Fallback",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1700, 800]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// FALLBACK — clasificación por reglas\n// ═══════════════════════════════════════\n// Se activa cuando el LLM falla (timeout, 5xx, sin content).\n// Produce el MISMO shape que la rama IA para que el flujo siga igual.\n\nconst inputData = $('⏱️ Start timer').first().json;\nconst vitals = inputData.vitals || {};\n\nlet priority = 'P3';\nlet reasoning = 'Clasificación por reglas (IA no disponible)';\n\nif (vitals.spo2 != null && vitals.spo2 < 92) {\n  priority = 'P1';\n  reasoning = 'FALLBACK: SpO2 crítico (<92).';\n} else if (vitals.hr != null && vitals.hr > 110) {\n  priority = 'P1';\n  reasoning = 'FALLBACK: taquicardia severa (HR >110).';\n} else if (inputData.age && inputData.age > 65) {\n  priority = 'P2';\n  reasoning = 'FALLBACK: adulto mayor con síntomas, evaluación urgente.';\n}\n\nreturn [{\n  json: {\n    ...inputData,\n    priority,\n    reasoning,\n    fallbackUsed: true,\n    tokensUsed: 0\n  }\n}];"
+      },
+      "id": "code-fallback",
+      "name": "⚠️ Fallback reglas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1700, 660]
+    },
+    {
+      "parameters": {
+        "content": "## 📊 Log Estructurado\n\n**Arma el JSON de log** con las métricas que querés trackear:\n- `latencyMs` (ahora - startedAtMs)\n- `priority`\n- `fallbackUsed`\n- `tokensUsed`\n- `ts`\n\nEn producción este JSON se mandaría a Loki/Datadog/CloudWatch con otro HTTP Request.\n\nAcá lo incluimos en la respuesta HTTP para que el alumno lo vea directo.",
+        "height": 360,
+        "width": 360,
+        "color": 2
+      },
+      "id": "note-log",
+      "name": "📝 Nota Log",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [2040, 60]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// LOG ESTRUCTURADO + MÉTRICAS\n// ═══════════════════════════════════════\n// Convierte el estado del flujo en un JSON\n// listo para enviar a un logger (Loki, Datadog, etc).\n\nconst d = $input.first().json;\nconst now = Date.now();\nconst latencyMs = d.startedAtMs ? (now - d.startedAtMs) : null;\n\nconst log = {\n  event: 'triage_completed',\n  ts: new Date(now).toISOString(),\n  priority: d.priority,\n  fallbackUsed: d.fallbackUsed,\n  tokensUsed: d.tokensUsed,\n  latencyMs\n};\n\nreturn [{\n  json: {\n    triage: {\n      priority: d.priority,\n      reasoning: d.reasoning\n    },\n    log\n  }\n}];"
+      },
+      "id": "code-log",
+      "name": "📊 Log JSON",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2080, 520]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-ok",
+      "name": "📤 Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2360, 520]
+    }
+  ],
+  "connections": {
+    "🩺 Webhook": {
+      "main": [[{ "node": "⏱️ Start timer", "type": "main", "index": 0 }]]
+    },
+    "⏱️ Start timer": {
+      "main": [[{ "node": "🤖 LLM (timeout corto)", "type": "main", "index": 0 }]]
+    },
+    "🤖 LLM (timeout corto)": {
+      "main": [[{ "node": "❓ ¿IA OK?", "type": "main", "index": 0 }]]
+    },
+    "❓ ¿IA OK?": {
+      "main": [
+        [{ "node": "📝 Parse IA", "type": "main", "index": 0 }],
+        [{ "node": "⚠️ Fallback reglas", "type": "main", "index": 0 }]
+      ]
+    },
+    "📝 Parse IA": {
+      "main": [[{ "node": "📊 Log JSON", "type": "main", "index": 0 }]]
+    },
+    "⚠️ Fallback reglas": {
+      "main": [[{ "node": "📊 Log JSON", "type": "main", "index": 0 }]]
+    },
+    "📊 Log JSON": {
+      "main": [[{ "node": "📤 Respond OK", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "conceptos" }, { "name": "observabilidad" }, { "name": "fallback" }]
+}

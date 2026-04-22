@@ -1,0 +1,180 @@
+{
+  "name": "Concepto 04 — Validar output del LLM",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 📘 Concepto 04 — Validar output del LLM\n\nEl LLM puede devolver cualquier cosa. **Hay que validar el shape** antes de usarlo.\n\n1. Webhook recibe paciente\n2. LLM lo analiza y devuelve JSON\n3. Code validator chequea el schema\n4. IF rutea según si pasó o no\n5. Respond OK / Error\n\n### 🧪 Probar\n\n```bash\ncurl -X POST http://localhost:5678/webhook/concepto-04 \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"age\":67,\"symptoms\":\"dolor toracico\"}'\n```\n\nPara forzar un fallo de schema, editá el nodo LLM y poné `max_tokens: 20`.",
+        "height": 400,
+        "width": 400,
+        "color": 7
+      },
+      "id": "note-intro",
+      "name": "📘 Documentación",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-40, 60]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "concepto-04",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "🩺 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [400, 400],
+      "webhookId": "concepto-04"
+    },
+    {
+      "parameters": {
+        "content": "## 🤖 LLM\n\nPide al modelo que devuelva JSON con `urgency` (P1/P2/P3/P4) y `reasoning` (string).\n\nSi bajás `max_tokens` a un número muy chico (ej: 20), el JSON se va a cortar y el validator de abajo lo rechaza.",
+        "height": 260,
+        "width": 320,
+        "color": 4
+      },
+      "id": "note-llm",
+      "name": "📝 Nota LLM",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [660, 60]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'google/gemini-2.0-flash-001',\n  temperature: 0.2,\n  max_tokens: 200,\n  messages: [\n    {\n      role: 'system',\n      content: 'Sos un asistente clínico. Devolvé SOLO un JSON con este formato exacto: {\"urgency\":\"P1\"|\"P2\"|\"P3\"|\"P4\",\"reasoning\":\"string\"}. Sin markdown, sin texto extra.'\n    },\n    {\n      role: 'user',\n      content: 'Paciente edad ' + ($json.body.age || '?') + ', síntomas: ' + ($json.body.symptoms || '')\n    }\n  ]\n}) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "http-llm",
+      "name": "🤖 LLM",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 400],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "## ✅ Schema Validator\n\n**Chequea 2 reglas:**\n1. `urgency` debe ser uno de: P1, P2, P3, P4\n2. `reasoning` debe ser string no vacío\n\nSi falla agrega strings a `errors[]` y pone `schemaValid: false`.\n\n**Por qué separar parser y validator:**\nJSON válido ≠ JSON correcto. El parser dice \"sintaxis OK\"; el validator dice \"contrato OK\".",
+        "height": 340,
+        "width": 360,
+        "color": 5
+      },
+      "id": "note-validator",
+      "name": "📝 Nota Validator",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1020, 60]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// JSON SCHEMA VALIDATOR (manual)\n// ═══════════════════════════════════════\n// 1. Intenta parsear el output del LLM\n// 2. Chequea que cumpla el shape esperado\n// 3. Acumula errors[] y setea schemaValid\n\nconst llmResponse = $input.first().json;\nconst content = llmResponse?.choices?.[0]?.message?.content;\n\nfunction tryParse(s) {\n  if (typeof s !== 'string') return null;\n  try { return JSON.parse(s); } catch (e) {}\n  const cleaned = s.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```\\s*$/, '').trim();\n  try { return JSON.parse(cleaned); } catch (e) {}\n  return null;\n}\n\nconst parsed = tryParse(content);\nconst errors = [];\n\nif (!parsed) {\n  errors.push('no se pudo parsear el output como JSON');\n} else {\n  const validUrgency = ['P1', 'P2', 'P3', 'P4'];\n  if (!validUrgency.includes(parsed.urgency)) {\n    errors.push(`urgency debe ser P1/P2/P3/P4 (recibido: ${parsed.urgency})`);\n  }\n  if (typeof parsed.reasoning !== 'string' || parsed.reasoning.trim().length === 0) {\n    errors.push('reasoning debe ser string no vacío');\n  }\n}\n\nconst schemaValid = errors.length === 0;\n\nreturn [{\n  json: {\n    schemaValid,\n    errors,\n    parsed,\n    rawContent: content\n  }\n}];"
+      },
+      "id": "code-validator",
+      "name": "✅ Validar Schema",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1080, 400]
+    },
+    {
+      "parameters": {
+        "content": "## ❓ IF\n\nRutea según `schemaValid`:\n- **true** → respuesta OK con el JSON parseado\n- **false** → error 400 con los `errors[]`\n\nEsto es lo que te permite degradar graceful cuando el LLM rompe el contrato.",
+        "height": 260,
+        "width": 300,
+        "color": 4
+      },
+      "id": "note-if",
+      "name": "📝 Nota IF",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1420, 60]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "schema-check",
+              "leftValue": "={{ $json.schemaValid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-schema",
+      "name": "❓ ¿Schema OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1440, 400]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: true, triage: $json.parsed } }}",
+        "options": {}
+      },
+      "id": "respond-ok",
+      "name": "✅ Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1720, 280]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { success: false, errors: $json.errors, rawContent: $json.rawContent } }}",
+        "options": { "responseCode": 400 }
+      },
+      "id": "respond-error",
+      "name": "❌ Respond Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1720, 520]
+    }
+  ],
+  "connections": {
+    "🩺 Webhook": {
+      "main": [[{ "node": "🤖 LLM", "type": "main", "index": 0 }]]
+    },
+    "🤖 LLM": {
+      "main": [[{ "node": "✅ Validar Schema", "type": "main", "index": 0 }]]
+    },
+    "✅ Validar Schema": {
+      "main": [[{ "node": "❓ ¿Schema OK?", "type": "main", "index": 0 }]]
+    },
+    "❓ ¿Schema OK?": {
+      "main": [
+        [{ "node": "✅ Respond OK", "type": "main", "index": 0 }],
+        [{ "node": "❌ Respond Error", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "conceptos" }, { "name": "schema" }]
+}

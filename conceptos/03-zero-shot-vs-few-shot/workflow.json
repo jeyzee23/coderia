@@ -1,0 +1,162 @@
+{
+  "name": "Concepto 03 — Zero-shot vs Few-shot",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 📘 Concepto 03 — Zero-shot vs Few-shot\n\nMismo input, dos prompts distintos:\n\n- **Rama A (zero-shot):** solo instrucciones, sin ejemplos\n- **Rama B (few-shot):** instrucciones + 2 ejemplos (P1 crítico y P4 leve)\n\nAl final comparás ambos outputs lado a lado.\n\n### 🧪 Probar\n\n```bash\ncurl -X POST http://localhost:5678/webhook/concepto-03 \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"age\":55,\"symptoms\":\"dolor de cabeza moderado con nauseas\",\"vitals\":{\"hr\":95}}'\n```\n\nVas a ver las dos respuestas del LLM en el output final.",
+        "height": 400,
+        "width": 400,
+        "color": 7
+      },
+      "id": "note-intro",
+      "name": "📘 Documentación",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-40, 60]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "concepto-03",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "🩺 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [400, 500],
+      "webhookId": "concepto-03"
+    },
+    {
+      "parameters": {
+        "content": "## 🅰️ Zero-shot\n\n**Prompt:** solo instrucciones.\n\n> Clasificá la urgencia como P1/P2/P3/P4. Devolvé JSON con {urgency, reasoning}.\n\n**Qué esperar:** el LLM puede devolver el JSON con texto extra, markdown fences, o interpretar la escala de forma inconsistente.",
+        "height": 280,
+        "width": 320,
+        "color": 3
+      },
+      "id": "note-zero-shot",
+      "name": "📝 Nota Zero-shot",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [680, 60]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'google/gemini-2.0-flash-001',\n  temperature: 0.2,\n  max_tokens: 300,\n  messages: [\n    {\n      role: 'system',\n      content: 'Sos un asistente clínico. Clasificá la urgencia como P1 (crítica), P2 (alta), P3 (media) o P4 (leve). Devolvé SOLO un JSON con {urgency, reasoning}.'\n    },\n    {\n      role: 'user',\n      content: 'Paciente edad ' + ($('🩺 Webhook').first().json.body.age || '?') + ', síntomas: ' + ($('🩺 Webhook').first().json.body.symptoms || '') + ', vitales: ' + JSON.stringify($('🩺 Webhook').first().json.body.vitals || {})\n    }\n  ]\n}) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "http-zero-shot",
+      "name": "🅰️ LLM Zero-shot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 500],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "onError": "continueRegularOutput",
+      "notes": "Zero-shot: solo instrucciones, cero ejemplos."
+    },
+    {
+      "parameters": {
+        "content": "## 🅱️ Few-shot\n\n**Prompt:** instrucciones + 2 ejemplos completos (un P1 y un P4).\n\n**Qué esperar:** el LLM imita el formato de los ejemplos. Output más estructurado y consistente. Menos texto extra, menos markdown fences.",
+        "height": 260,
+        "width": 320,
+        "color": 3
+      },
+      "id": "note-few-shot",
+      "name": "📝 Nota Few-shot",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1060, 60]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.OPENROUTER_API_KEY }}" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  model: 'google/gemini-2.0-flash-001',\n  temperature: 0.2,\n  max_tokens: 300,\n  messages: [\n    {\n      role: 'system',\n      content: 'Sos un asistente clínico. Clasificá la urgencia como P1, P2, P3 o P4. Devolvé SOLO un JSON con {urgency, reasoning}.\\n\\nEjemplo 1:\\nInput: 67 años, dolor toracico opresivo con disnea, SpO2 91 HR 115 TA 180/110.\\nOutput: {\"urgency\":\"P1\",\"reasoning\":\"Sospecha de síndrome coronario agudo con hipoxemia y HTA severa.\"}\\n\\nEjemplo 2:\\nInput: 32 años, dolor de garganta leve y congestion nasal, HR 72 SpO2 98.\\nOutput: {\"urgency\":\"P4\",\"reasoning\":\"Cuadro viral de baja complejidad, sin signos de alarma.\"}'\n    },\n    {\n      role: 'user',\n      content: 'Paciente edad ' + ($('🩺 Webhook').first().json.body.age || '?') + ', síntomas: ' + ($('🩺 Webhook').first().json.body.symptoms || '') + ', vitales: ' + JSON.stringify($('🩺 Webhook').first().json.body.vitals || {})\n    }\n  ]\n}) }}",
+        "options": { "timeout": 10000 }
+      },
+      "id": "http-few-shot",
+      "name": "🅱️ LLM Few-shot",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1080, 500],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "onError": "continueRegularOutput",
+      "notes": "Few-shot: 2 ejemplos completos (P1 y P4) antes del input real."
+    },
+    {
+      "parameters": {
+        "content": "## 🔀 Comparar\n\nJunta ambas respuestas en un solo objeto para que veas la diferencia lado a lado.\n\nUsa `$('Nodo').first().json` para acceder a outputs de nodos anteriores por nombre.",
+        "height": 240,
+        "width": 300,
+        "color": 4
+      },
+      "id": "note-compare",
+      "name": "📝 Nota Comparar",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1440, 60]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// Compara outputs zero-shot vs few-shot\n// ═══════════════════════════════════════\n// Accedemos a las respuestas de AMBOS HTTP Requests\n// usando $('Nombre del nodo').first().json\n\nconst zeroShotResp = $('🅰️ LLM Zero-shot').first().json;\nconst fewShotResp = $('🅱️ LLM Few-shot').first().json;\n\nconst zeroShotRaw = zeroShotResp?.choices?.[0]?.message?.content || 'sin respuesta';\nconst fewShotRaw = fewShotResp?.choices?.[0]?.message?.content || 'sin respuesta';\n\nfunction tryParse(s) {\n  if (typeof s !== 'string') return s;\n  try { return JSON.parse(s); } catch (e) {}\n  const cleaned = s.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```\\s*$/, '').trim();\n  try { return JSON.parse(cleaned); } catch (e) {}\n  return null;\n}\n\nreturn [{\n  json: {\n    input: $('🩺 Webhook').first().json.body,\n    zeroShot: {\n      raw: zeroShotRaw,\n      parsed: tryParse(zeroShotRaw),\n      tokens: zeroShotResp?.usage?.total_tokens || 0\n    },\n    fewShot: {\n      raw: fewShotRaw,\n      parsed: tryParse(fewShotRaw),\n      tokens: fewShotResp?.usage?.total_tokens || 0\n    }\n  }\n}];"
+      },
+      "id": "code-compare",
+      "name": "🔀 Comparar outputs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1480, 500]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-ok",
+      "name": "📤 Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1780, 500]
+    }
+  ],
+  "connections": {
+    "🩺 Webhook": {
+      "main": [[{ "node": "🅰️ LLM Zero-shot", "type": "main", "index": 0 }]]
+    },
+    "🅰️ LLM Zero-shot": {
+      "main": [[{ "node": "🅱️ LLM Few-shot", "type": "main", "index": 0 }]]
+    },
+    "🅱️ LLM Few-shot": {
+      "main": [[{ "node": "🔀 Comparar outputs", "type": "main", "index": 0 }]]
+    },
+    "🔀 Comparar outputs": {
+      "main": [[{ "node": "📤 Respond OK", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "conceptos" }, { "name": "prompting" }, { "name": "openrouter" }]
+}

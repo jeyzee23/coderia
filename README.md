@@ -6,15 +6,23 @@ Workflow de **triage clínico** construido en n8n self-hosted + OpenRouter. Dos 
 
 ---
 
+## 🎓 ¿Recién arrancás?
+
+Empezá por **[`conceptos/`](./conceptos/)** — 6 mini-workflows de 2-6 nodos, cada uno enseñando una idea por separado (webhooks, HTTP Request, LLM, few-shot, JSON schema, LlamaCloud, observabilidad + fallback). Cuando los entendés, pasás a `clase-1/` y `clase-2/` donde todo se integra.
+
+---
+
 ## 📚 Estructura del repo
 
 ```
 coder-ia/
-├── clase-1/   → Workflow base (puerto 5678)
-└── clase-2/   → Extensión avanzada (puerto 5679)
+├── conceptos/  → 6 mini-workflows pedagógicos (arrancá acá)
+├── clase-1/    → Workflow base integrado (puerto 5678)
+└── clase-2/    → Workflow avanzado integrado (puerto 5679)
 ```
 
-Cada carpeta es **auto-contenida**: tiene su propio `docker-compose.yml`, `.env.example`, `workflow.json` y `README.md`. Conviven sin chocar.
+- **`conceptos/`** usa el n8n de `clase-1/` — no necesita setup propio.
+- **`clase-1/`** y **`clase-2/`** son auto-contenidas: cada una con su `docker-compose.yml`, `.env.example`, `workflow.json` y `README.md`. Conviven sin chocar.
 
 ---
 

@@ -1,0 +1,165 @@
+{
+  "name": "Concepto 01 — n8n 101 (Webhook + Code + IF + Respond)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 📘 Concepto 01 — n8n 101\n\nFundamentos de n8n en un solo workflow:\n\n1. **Webhook** — recibe un POST\n2. **Code** — procesa datos con JavaScript\n3. **IF** — bifurca según una condición\n4. **Respond** — devuelve la respuesta\n\n### 🧪 Probar\n\n```bash\ncurl -X POST http://localhost:5678/webhook/concepto-01 \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"patientId\":\"P-001\",\"age\":67,\"vitals\":{\"spo2\":88}}'\n```\n\nProbá con `spo2: 88` (crítico) y con `spo2: 98` (OK) para ver las dos ramas.",
+        "height": 380,
+        "width": 360,
+        "color": 7
+      },
+      "id": "note-intro",
+      "name": "📘 Documentación",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-40, 60]
+    },
+    {
+      "parameters": {
+        "content": "## 1️⃣ Webhook\n\n**Qué hace:** escucha POST en `/webhook/concepto-01`.\n\n**Parámetros clave:**\n- `httpMethod: POST`\n- `path: concepto-01`\n- `responseMode: responseNode` (la respuesta la da un nodo de 'Respond to Webhook' al final)\n\nEl body llega en `$json.body` al siguiente nodo.",
+        "height": 260,
+        "width": 280,
+        "color": 4
+      },
+      "id": "note-webhook",
+      "name": "📝 Nota Webhook",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [340, 60]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "concepto-01",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "🩺 Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [380, 400],
+      "webhookId": "concepto-01"
+    },
+    {
+      "parameters": {
+        "content": "## 2️⃣ Code\n\n**Qué hace:** lee el body del paciente y calcula si tiene vitales críticos (SpO2 < 92).\n\n**Claves:**\n- `$input.first().json.body` → accedés al body del webhook\n- `return [{ json: {...} }]` → devolvés UN item al siguiente nodo\n\nPodés poner toda la lógica que quieras acá en JS.",
+        "height": 280,
+        "width": 300,
+        "color": 4
+      },
+      "id": "note-code",
+      "name": "📝 Nota Code",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [680, 60]
+    },
+    {
+      "parameters": {
+        "jsCode": "// ═══════════════════════════════════════\n// CONCEPTO: Code node básico\n// ═══════════════════════════════════════\n// Leemos el body del webhook y calculamos\n// si los vitales del paciente son críticos.\n\nconst body = $input.first().json.body || {};\nconst vitals = body.vitals || {};\n\nconst hasCriticalVitals = vitals.spo2 != null && vitals.spo2 < 92;\n\nreturn [{\n  json: {\n    patientId: body.patientId || 'desconocido',\n    age: body.age || null,\n    spo2: vitals.spo2 ?? null,\n    hasCriticalVitals\n  }\n}];"
+      },
+      "id": "code-process",
+      "name": "⚙️ Code — Calcular criticidad",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [720, 400]
+    },
+    {
+      "parameters": {
+        "content": "## 3️⃣ IF\n\n**Qué hace:** bifurca según `hasCriticalVitals`.\n\n**Configuración:**\n- `leftValue: {{ $json.hasCriticalVitals }}`\n- Operator: `boolean equals true`\n\nDos salidas:\n- **true** → rama de alerta (arriba)\n- **false** → rama OK (abajo)",
+        "height": 280,
+        "width": 280,
+        "color": 4
+      },
+      "id": "note-if",
+      "name": "📝 Nota IF",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1020, 60]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "critical-check",
+              "leftValue": "={{ $json.hasCriticalVitals }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-critical",
+      "name": "❓ ¿Vitales críticos?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [1060, 400]
+    },
+    {
+      "parameters": {
+        "content": "## 4️⃣ Respond to Webhook\n\nDevuelve la respuesta HTTP al cliente (quien hizo el POST inicial).\n\n- **Rama alerta:** status 200, mensaje 🚨\n- **Rama OK:** status 200, mensaje ✅\n\nAmbos responden al MISMO cliente que hizo la request.",
+        "height": 260,
+        "width": 300,
+        "color": 4
+      },
+      "id": "note-respond",
+      "name": "📝 Nota Respond",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1360, 60]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { alert: true, message: '🚨 Paciente con vitales críticos — derivar a guardia', patient: $json } }}",
+        "options": {}
+      },
+      "id": "respond-alert",
+      "name": "🚨 Respond Alerta",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1380, 280]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { alert: false, message: '✅ Paciente estable', patient: $json } }}",
+        "options": {}
+      },
+      "id": "respond-ok",
+      "name": "✅ Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1380, 500]
+    }
+  ],
+  "connections": {
+    "🩺 Webhook": {
+      "main": [[{ "node": "⚙️ Code — Calcular criticidad", "type": "main", "index": 0 }]]
+    },
+    "⚙️ Code — Calcular criticidad": {
+      "main": [[{ "node": "❓ ¿Vitales críticos?", "type": "main", "index": 0 }]]
+    },
+    "❓ ¿Vitales críticos?": {
+      "main": [
+        [{ "node": "🚨 Respond Alerta", "type": "main", "index": 0 }],
+        [{ "node": "✅ Respond OK", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "conceptos" }, { "name": "fundamentos" }]
+}

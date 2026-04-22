@@ -1,0 +1,167 @@
+{
+  "name": "Concepto 05 — LlamaCloud (PDF → texto)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## 📘 Concepto 05 — LlamaCloud\n\nCómo convertir un **PDF en texto procesable** usando LlamaCloud (servicio externo).\n\nEl parsing es **asíncrono**:\n1. Subís el PDF y te devuelve un `job_id`\n2. Esperás unos segundos\n3. Consultás el job y bajás el markdown\n\n### 🧪 Probar\n\n```bash\ncurl -X POST http://localhost:5678/webhook/concepto-05 \\\n  -H 'Content-Type: application/json' \\\n  -d '{\"pdfUrl\":\"https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf\"}'\n```\n\n**Requisito:** `LLAMA_CLOUD_API_KEY` seteada en el `.env` de clase-2.",
+        "height": 440,
+        "width": 400,
+        "color": 7
+      },
+      "id": "note-intro",
+      "name": "📘 Documentación",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [-40, 60]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "concepto-05",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-trigger",
+      "name": "📄 Webhook (pdfUrl)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [400, 400],
+      "webhookId": "concepto-05"
+    },
+    {
+      "parameters": {
+        "content": "## ☁️ Upload\n\n**Qué hace:** sube el PDF a LlamaCloud para parseo.\n\n**Parámetros clave:**\n- URL: `POST /api/v1/parsing/upload`\n- `contentType: multipart-form-data`\n- `input_url`: URL pública del PDF\n- `result_type: markdown` → queremos markdown como output\n- `language: es`\n\n**Respuesta:** `{ id: 'job_xxx', status: 'PENDING' }`",
+        "height": 320,
+        "width": 340,
+        "color": 4
+      },
+      "id": "note-upload",
+      "name": "📝 Nota Upload",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [660, 60]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cloud.llamaindex.ai/api/v1/parsing/upload",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.LLAMA_CLOUD_API_KEY }}" },
+            { "name": "Accept", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            { "name": "input_url", "value": "={{ $json.body.pdfUrl }}" },
+            { "name": "result_type", "value": "markdown" },
+            { "name": "language", "value": "es" }
+          ]
+        },
+        "options": { "timeout": 15000 }
+      },
+      "id": "llama-upload",
+      "name": "☁️ LlamaCloud Upload",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [720, 400],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "content": "## ⏳ Wait\n\n**Por qué:** LlamaCloud parsea el PDF en background. Si consultás inmediatamente, te devuelve `PENDING`.\n\n**8 segundos** alcanza para PDFs chicos. Para PDFs grandes (>5 páginas) subí a 15s o implementá polling real.",
+        "height": 240,
+        "width": 300,
+        "color": 4
+      },
+      "id": "note-wait",
+      "name": "📝 Nota Wait",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1020, 60]
+    },
+    {
+      "parameters": {
+        "amount": 8,
+        "unit": "seconds"
+      },
+      "id": "wait-parsing",
+      "name": "⏳ Wait 8s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [1040, 400],
+      "webhookId": "wait-concepto-05"
+    },
+    {
+      "parameters": {
+        "content": "## 📥 GET Markdown\n\n**Qué hace:** consulta el job y descarga el resultado.\n\n**URL:** `GET /api/v1/parsing/job/{id}/result/markdown`\n\n`{{ $json.id }}` es el `job_id` que devolvió el Upload. El retry (5x) cubre casos donde el parsing tarda más de 8s.",
+        "height": 280,
+        "width": 340,
+        "color": 4
+      },
+      "id": "note-get",
+      "name": "📝 Nota GET",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [1340, 60]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.cloud.llamaindex.ai/api/v1/parsing/job/{{ $json.id }}/result/markdown",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "=Bearer {{ $env.LLAMA_CLOUD_API_KEY }}" },
+            { "name": "Accept", "value": "application/json" }
+          ]
+        },
+        "options": { "timeout": 15000 }
+      },
+      "id": "llama-get",
+      "name": "📥 Obtener Markdown",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1380, 400],
+      "retryOnFail": true,
+      "maxTries": 5,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  success: true,\n  pdfUrl: $('📄 Webhook (pdfUrl)').first().json.body.pdfUrl,\n  markdown: $json.markdown || $json.result || $json,\n  charCount: ($json.markdown || '').length\n} }}",
+        "options": {}
+      },
+      "id": "respond-ok",
+      "name": "📤 Respond OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1720, 400]
+    }
+  ],
+  "connections": {
+    "📄 Webhook (pdfUrl)": {
+      "main": [[{ "node": "☁️ LlamaCloud Upload", "type": "main", "index": 0 }]]
+    },
+    "☁️ LlamaCloud Upload": {
+      "main": [[{ "node": "⏳ Wait 8s", "type": "main", "index": 0 }]]
+    },
+    "⏳ Wait 8s": {
+      "main": [[{ "node": "📥 Obtener Markdown", "type": "main", "index": 0 }]]
+    },
+    "📥 Obtener Markdown": {
+      "main": [[{ "node": "📤 Respond OK", "type": "main", "index": 0 }]]
+    }
+  },
+  "active": false,
+  "settings": { "executionOrder": "v1" },
+  "tags": [{ "name": "conceptos" }, { "name": "llamacloud" }, { "name": "pdf" }]
+}
