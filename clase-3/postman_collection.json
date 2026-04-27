@@ -1,0 +1,300 @@
+{
+  "info": {
+    "name": "Healthcare RAG - Clase 3 (n8n Local)",
+    "description": "Coleccion para probar el workflow padre y los workflows parciales de clase 3.\n\nOrden sugerido: 01 chunking -> 02 embeddings -> 03 retrieval -> 04 generation -> 05 guardrails -> workflow padre.\n\nPuerto: 5680.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "healthcare-rag-clase-3"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5680",
+      "type": "string"
+    },
+    {
+      "key": "pdfUrl",
+      "value": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Workflow padre",
+      "description": "Requiere workflow activo.",
+      "item": [
+        {
+          "name": "RAG completo - prospectos GI",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('answer existe', () => pm.expect(b.answer).to.be.a('string'));",
+                  "pm.test('sources no vacio', () => pm.expect(b.sources.length).to.be.greaterThan(0));",
+                  "pm.test('retrieval presente', () => pm.expect(b.retrieval).to.be.an('object'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/rag-clinical-query",
+              "host": [
+                "{{baseUrl}}/webhook/rag-clinical-query"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"Que prospectos mencionan dolor abdominal y nauseas en adultos mayores?\",\n  \"topK\": 4,\n  \"scope\": \"prospectos\",\n  \"patientContext\": { \"age\": 68, \"sex\": \"masculino\" }\n}"
+            }
+          }
+        },
+        {
+          "name": "Error 400 - falta question",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/rag-clinical-query",
+              "host": [
+                "{{baseUrl}}/webhook/rag-clinical-query"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"topK\": 4\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Workflows parciales",
+      "item": [
+        {
+          "name": "01 - Chunking",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('chunks > 0', () => pm.expect(b.chunks.length).to.be.greaterThan(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/rag-step-01-chunking",
+              "host": [
+                "{{baseUrl}}/webhook/rag-step-01-chunking"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ }"
+            }
+          }
+        },
+        {
+          "name": "02 - Embeddings simulados",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('embeddedChunks > 0', () => pm.expect(b.embeddedChunks.length).to.be.greaterThan(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/rag-step-02-embeddings",
+              "host": [
+                "{{baseUrl}}/webhook/rag-step-02-embeddings"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ }"
+            }
+          }
+        },
+        {
+          "name": "03 - Retrieval top-k",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('retrievedChunks > 0', () => pm.expect(b.retrievedChunks.length).to.be.greaterThan(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/rag-step-03-retrieval",
+              "host": [
+                "{{baseUrl}}/webhook/rag-step-03-retrieval"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"Que prospectos mencionan dolor abdominal y nauseas en adultos mayores?\",\n  \"scope\": \"prospectos\"\n}"
+            }
+          }
+        },
+        {
+          "name": "04 - Generation con fuentes",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('llmRaw existe', () => pm.expect(b.llmRaw).to.be.a('string'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/rag-step-04-generation",
+              "host": [
+                "{{baseUrl}}/webhook/rag-step-04-generation"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"Que prospectos mencionan dolor abdominal y nauseas en adultos mayores?\",\n  \"scope\": \"prospectos\"\n}"
+            }
+          }
+        },
+        {
+          "name": "05 - Guardrails y fallback",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('log existe', () => pm.expect(b.log).to.be.an('object'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/rag-step-05-guardrails",
+              "host": [
+                "{{baseUrl}}/webhook/rag-step-05-guardrails"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"Que prospectos mencionan dolor abdominal y nauseas en adultos mayores?\"\n}"
+            }
+          }
+        },
+        {
+          "name": "07 - LlamaCloud opcional",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/rag-step-07-llamacloud-ingest",
+              "host": [
+                "{{baseUrl}}/webhook/rag-step-07-llamacloud-ingest"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pdfUrl\": \"{{pdfUrl}}\"\n}"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

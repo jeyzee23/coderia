@@ -1,0 +1,150 @@
+{
+  "name": "Clase 3 - Step 01 - Chunking",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Paso 1 - Chunking\n\nEntrada: `documents[]` (o dataset por defecto).\nSalida: `chunks[]`.\n\nEste workflow explica como pasamos de documentos largos a unidades recuperables.",
+        "height": 220,
+        "width": 380,
+        "color": 7
+      },
+      "id": "note-doc-01",
+      "name": "📘 Paso 1",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -320,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Asociacion teoria-practica\n\nRAG no busca sobre PDFs completos. Busca sobre fragmentos.\nSi el chunk parte mal una idea, la respuesta final nace mal.",
+        "height": 220,
+        "width": 320,
+        "color": 4
+      },
+      "id": "note-theory-01",
+      "name": "📝 Nota Teórica",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        520,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rag-step-01-chunking",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-01",
+      "name": "📥 Webhook - Step 01",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        180,
+        360
+      ],
+      "webhookId": "rag-step-01-chunking"
+    },
+    {
+      "parameters": {
+        "jsCode": "const DIMENSIONS = 64;\n\nfunction stripAccents(text) {\n  return String(text || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');\n}\n\nfunction normalize(text) {\n  const replacements = {\n    panza: 'abdominal',\n    barriga: 'abdominal',\n    estomago: 'abdominal',\n    pecho: 'toracico',\n    torax: 'toracico',\n    nausea: 'nauseas',\n    vomitar: 'vomito',\n    vomitos: 'vomito',\n    gastricas: 'gastrointestinal',\n    gastrica: 'gastrointestinal',\n    falta: 'disnea',\n    aire: 'disnea',\n    anciano: 'adulto',\n    ancianos: 'adultos',\n    geriatrico: 'adulto',\n    remedio: 'medicamento',\n    remedios: 'medicamentos'\n  };\n\n  const cleaned = stripAccents(text)\n    .toLowerCase()\n    .replace(/[^a-z0-9\\s]/g, ' ')\n    .replace(/\\s+/g, ' ')\n    .trim();\n\n  return cleaned\n    ? cleaned.split(' ').map((token) => replacements[token] || token)\n    : [];\n}\n\nfunction hashText(text) {\n  let hash = 0;\n  for (const ch of String(text || '')) {\n    hash = ((hash << 5) - hash) + ch.charCodeAt(0);\n    hash |= 0;\n  }\n  return 'hash_' + Math.abs(hash).toString(36);\n}\n\nfunction buildVector(text, dims = DIMENSIONS) {\n  const vec = Array(dims).fill(0);\n  for (const token of normalize(text)) {\n    let hash = 0;\n    for (let i = 0; i < token.length; i++) {\n      hash = ((hash << 5) - hash) + token.charCodeAt(i);\n      hash |= 0;\n    }\n    const idx = Math.abs(hash) % dims;\n    vec[idx] += 1;\n  }\n  const norm = Math.sqrt(vec.reduce((acc, value) => acc + (value * value), 0)) || 1;\n  return vec.map((value) => Number((value / norm).toFixed(6)));\n}\n\nfunction cosine(a, b) {\n  let sum = 0;\n  for (let i = 0; i < Math.max(a.length, b.length); i++) {\n    sum += (a[i] || 0) * (b[i] || 0);\n  }\n  return sum;\n}\n\nfunction overlapScore(queryText, candidateText) {\n  const q = new Set(normalize(queryText));\n  const c = new Set(normalize(candidateText));\n  if (!q.size) return 0;\n  let hits = 0;\n  for (const token of q) if (c.has(token)) hits += 1;\n  return hits / q.size;\n}\n\nfunction getDefaultDocuments() {\n  return [\n  {\n    \"docId\": \"doc-pro-ibuprofeno-v1\",\n    \"title\": \"Prospecto - Ibuprofeno 400 mg\",\n    \"category\": \"prospecto\",\n    \"version\": \"2026-01\",\n    \"tags\": [\n      \"dolor\",\n      \"antiinflamatorio\",\n      \"gastrointestinal\"\n    ],\n    \"sections\": [\n      {\n        \"slug\": \"indicaciones\",\n        \"title\": \"Indicaciones\",\n        \"text\": \"Indicado para dolor leve a moderado, fiebre e inflamacion. Se usa en cuadros osteomusculares y cefaleas, pero no reemplaza la evaluacion clinica cuando hay signos de alarma.\"\n      },\n      {\n        \"slug\": \"efectos-adversos\",\n        \"title\": \"Efectos adversos\",\n        \"text\": \"Puede provocar dolor abdominal, dispepsia, nauseas, gastritis y, con menor frecuencia, vomitos o sangrado digestivo. El riesgo gastrointestinal aumenta con dosis altas o uso prolongado.\"\n      },\n      {\n        \"slug\": \"adultos-mayores\",\n        \"title\": \"Adultos mayores y alertas\",\n        \"text\": \"En personas mayores de 65 anos conviene usar la menor dosis efectiva y vigilar deshidratacion, deterioro renal y signos de hemorragia digestiva. Si hay dolor abdominal persistente, se debe suspender y consultar.\"\n      }\n    ]\n  },\n  {\n    \"docId\": \"doc-pro-metformina-v1\",\n    \"title\": \"Prospecto - Metformina 850 mg\",\n    \"category\": \"prospecto\",\n    \"version\": \"2026-02\",\n    \"tags\": [\n      \"diabetes\",\n      \"nauseas\",\n      \"gastrointestinal\"\n    ],\n    \"sections\": [\n      {\n        \"slug\": \"indicaciones\",\n        \"title\": \"Indicaciones\",\n        \"text\": \"Medicamento para diabetes tipo 2. Se recomienda iniciar en forma gradual y acompanar con plan alimentario y control de glucemia.\"\n      },\n      {\n        \"slug\": \"efectos-adversos\",\n        \"title\": \"Efectos adversos\",\n        \"text\": \"Los efectos adversos mas frecuentes son nauseas, diarrea, distension, molestias gastrointestinales y dolor abdominal. Suelen aparecer al inicio del tratamiento o al subir dosis.\"\n      },\n      {\n        \"slug\": \"poblaciones-especiales\",\n        \"title\": \"Poblaciones especiales\",\n        \"text\": \"En adultos mayores conviene revisar funcion renal y estado de hidratacion antes de ajustar dosis. Si hay intolerancia digestiva marcada, debe reevaluarse el esquema terapeutico.\"\n      }\n    ]\n  },\n  {\n    \"docId\": \"doc-pro-amoxicilina-v1\",\n    \"title\": \"Prospecto - Amoxicilina 500 mg\",\n    \"category\": \"prospecto\",\n    \"version\": \"2026-01\",\n    \"tags\": [\n      \"antibiotico\",\n      \"nauseas\",\n      \"diarrea\"\n    ],\n    \"sections\": [\n      {\n        \"slug\": \"indicaciones\",\n        \"title\": \"Indicaciones\",\n        \"text\": \"Antibiotico betalactamico para infecciones respiratorias, otitis, sinusitis y otras infecciones bacterianas sensibles.\"\n      },\n      {\n        \"slug\": \"efectos-adversos\",\n        \"title\": \"Efectos adversos\",\n        \"text\": \"Puede asociarse a diarrea, nauseas, vomitos, dolor abdominal y rash cutaneo. Ante diarrea intensa o persistente debe considerarse colitis asociada a antibioticos.\"\n      },\n      {\n        \"slug\": \"alertas\",\n        \"title\": \"Alertas\",\n        \"text\": \"Si aparecen reacciones alergicas, disnea o compromiso hemodinamico, suspender y derivar. La presencia de sintomas digestivos aislados no equivale por si sola a una urgencia vital.\"\n      }\n    ]\n  },\n  {\n    \"docId\": \"doc-guia-dolor-toracico-v2\",\n    \"title\": \"Guia - Manejo inicial del dolor toracico\",\n    \"category\": \"guia\",\n    \"version\": \"2026-03\",\n    \"tags\": [\n      \"triage\",\n      \"dolor toracico\",\n      \"cardiologia\"\n    ],\n    \"sections\": [\n      {\n        \"slug\": \"banderas-rojas\",\n        \"title\": \"Banderas rojas\",\n        \"text\": \"Dolor toracico opresivo con irradiacion a brazo, disnea, sudoracion o nauseas debe considerarse de alto riesgo hasta descartar sindrome coronario agudo. Priorizar ECG y evaluacion urgente.\"\n      },\n      {\n        \"slug\": \"triaje\",\n        \"title\": \"Triage inicial\",\n        \"text\": \"Si el paciente presenta hipotension, saturacion baja o compromiso del estado general, la derivacion debe ser inmediata. La guia no reemplaza criterio medico ni protocolos institucionales.\"\n      }\n    ]\n  },\n  {\n    \"docId\": \"doc-guia-nauseas-v1\",\n    \"title\": \"Guia - Nauseas, vomitos y dolor abdominal\",\n    \"category\": \"guia\",\n    \"version\": \"2026-02\",\n    \"tags\": [\n      \"gastrointestinal\",\n      \"nauseas\",\n      \"abdomen\"\n    ],\n    \"sections\": [\n      {\n        \"slug\": \"evaluacion-inicial\",\n        \"title\": \"Evaluacion inicial\",\n        \"text\": \"Nauseas y dolor abdominal requieren valorar hidratacion, fiebre, vomitos persistentes, diarrea y medicamentos recientes. La cronologia de los sintomas ayuda a distinguir eventos adversos de causas infecciosas.\"\n      },\n      {\n        \"slug\": \"signos-de-alarma\",\n        \"title\": \"Signos de alarma\",\n        \"text\": \"Dolor abdominal intenso, sangrado digestivo, rigidez abdominal, compromiso hemodinamico o dificultad respiratoria requieren evaluacion presencial urgente. En adultos mayores el umbral de derivacion debe ser mas bajo.\"\n      }\n    ]\n  },\n  {\n    \"docId\": \"doc-guia-disnea-v1\",\n    \"title\": \"Guia - Disnea y signos de alarma respiratorios\",\n    \"category\": \"guia\",\n    \"version\": \"2026-01\",\n    \"tags\": [\n      \"disnea\",\n      \"respiratorio\",\n      \"urgencia\"\n    ],\n    \"sections\": [\n      {\n        \"slug\": \"triaje-respiratorio\",\n        \"title\": \"Triage respiratorio\",\n        \"text\": \"Disnea de inicio agudo, dolor toracico, sibilancias intensas o saturacion menor a 92 por ciento exigen evaluacion rapida. La presencia de fiebre o tos no reduce el riesgo por si sola.\"\n      },\n      {\n        \"slug\": \"derivacion\",\n        \"title\": \"Derivacion\",\n        \"text\": \"Si la disnea limita hablar, caminar o se acompana de confusion, la consulta debe escalarse como prioritaria. Documentar tiempos, factores precipitantes y antecedentes respiratorios.\"\n      }\n    ]\n  }\n];\n}\n\nfunction chunkDocuments(documents) {\n  const chunks = [];\n\n  for (const doc of documents) {\n    for (const [sectionIndex, section] of (doc.sections || []).entries()) {\n      const rawSentences = String(section.text || '')\n        .split(/(?<=[.!?])\\s+/)\n        .map((sentence) => sentence.trim())\n        .filter(Boolean);\n      const sentences = rawSentences.length\n        ? rawSentences\n        : [String(section.text || '').trim()].filter(Boolean);\n\n      let buffer = [];\n      let chunkCounter = 0;\n\n      const flush = () => {\n        const text = buffer.join(' ').trim();\n        if (!text) return;\n        chunkCounter += 1;\n        chunks.push({\n          chunkId: `${doc.docId}-${section.slug || ('sec' + (sectionIndex + 1))}-c${chunkCounter}`,\n          docId: doc.docId,\n          title: doc.title,\n          category: doc.category,\n          version: doc.version,\n          section: section.title,\n          sectionSlug: section.slug || `sec-${sectionIndex + 1}`,\n          text,\n          tags: doc.tags || [],\n          sourceLabel: `${doc.title} / ${section.title}`\n        });\n        buffer = [];\n      };\n\n      for (const sentence of sentences) {\n        const current = buffer.join(' ');\n        if (current && (current.length + sentence.length + 1) > 320) flush();\n        buffer.push(sentence);\n      }\n      flush();\n    }\n  }\n\n  return chunks;\n}\n\nfunction embedChunks(chunks) {\n  return chunks.map((chunk) => {\n    const textForEmbedding = [chunk.title, chunk.section, ...(chunk.tags || []), chunk.text].join(' ');\n    return {\n      ...chunk,\n      textForEmbedding,\n      vector: buildVector(textForEmbedding)\n    };\n  });\n}\n\nfunction buildRetrieval(question, topK, embeddedChunks, scope, patientContext) {\n  const safeTopK = Math.min(Math.max(Number(topK || 5), 1), 8);\n  const safeScope = ['all', 'prospectos', 'guias'].includes(scope) ? scope : 'all';\n  const patientBits = patientContext && typeof patientContext === 'object'\n    ? Object.entries(patientContext).map(([key, value]) => `${key}: ${value}`).join(', ')\n    : '';\n  const queryText = [question, patientBits].filter(Boolean).join(' | ');\n  const queryVector = buildVector(queryText);\n\n  const filteredChunks = embeddedChunks.filter((chunk) => {\n    if (safeScope === 'all') return true;\n    if (safeScope === 'prospectos') return chunk.category === 'prospecto';\n    if (safeScope === 'guias') return chunk.category === 'guia';\n    return true;\n  });\n\n  const scored = filteredChunks\n    .map((chunk) => {\n      const semanticScore = cosine(queryVector, chunk.vector);\n      const lexicalScore = overlapScore(queryText, chunk.textForEmbedding);\n      const score = Number(((semanticScore * 0.75) + (lexicalScore * 0.25)).toFixed(4));\n      return {\n        ...chunk,\n        semanticScore: Number(semanticScore.toFixed(4)),\n        lexicalScore: Number(lexicalScore.toFixed(4)),\n        score\n      };\n    })\n    .filter((chunk) => chunk.score > 0.04)\n    .sort((a, b) => b.score - a.score);\n\n  const retrievedChunks = scored.slice(0, safeTopK).map((chunk) => {\n    const { vector, textForEmbedding, ...rest } = chunk;\n    return rest;\n  });\n\n  const topScore = retrievedChunks[0] ? retrievedChunks[0].score : 0;\n\n  return {\n    queryText,\n    queryVector,\n    retrievedChunks,\n    retrieval: {\n      topK: safeTopK,\n      returned: retrievedChunks.length,\n      topScore: Number(topScore.toFixed(4)),\n      minScoreThreshold: 0.18,\n      scopeUsed: safeScope,\n      availableChunks: filteredChunks.length\n    },\n    evidenceSufficient: retrievedChunks.length > 0 && topScore >= 0.18\n  };\n}\n\n\n\n    const input = $input.first().json.body || $input.first().json;\n    const hasCustomDocs = Array.isArray(input.documents) && input.documents.length > 0;\n    const documents = hasCustomDocs ? input.documents : getDefaultDocuments();\n\n    return [{\n      json: {\n        step: '01-chunking',\n        documents,\n        didUseDefaultDocuments: !hasCustomDocs,\n        contractOut: {\n          step: '01-chunking',\n          shape: '{documents[], chunks[]}',\n          next: '02-embeddings-simulados'\n        }\n      }\n    }];"
+      },
+      "id": "code-docs-01",
+      "name": "📚 Preparar documentos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        400,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const DIMENSIONS = 64;\n\nfunction stripAccents(text) {\n  return String(text || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');\n}\n\nfunction normalize(text) {\n  const replacements = {\n    panza: 'abdominal',\n    barriga: 'abdominal',\n    estomago: 'abdominal',\n    pecho: 'toracico',\n    torax: 'toracico',\n    nausea: 'nauseas',\n    vomitar: 'vomito',\n    vomitos: 'vomito',\n    gastricas: 'gastrointestinal',\n    gastrica: 'gastrointestinal',\n    falta: 'disnea',\n    aire: 'disnea',\n    anciano: 'adulto',\n    ancianos: 'adultos',\n    geriatrico: 'adulto',\n    remedio: 'medicamento',\n    remedios: 'medicamentos'\n  };\n\n  const cleaned = stripAccents(text)\n    .toLowerCase()\n    .replace(/[^a-z0-9\\s]/g, ' ')\n    .replace(/\\s+/g, ' ')\n    .trim();\n\n  return cleaned\n    ? cleaned.split(' ').map((token) => replacements[token] || token)\n    : [];\n}\n\nfunction hashText(text) {\n  let hash = 0;\n  for (const ch of String(text || '')) {\n    hash = ((hash << 5) - hash) + ch.charCodeAt(0);\n    hash |= 0;\n  }\n  return 'hash_' + Math.abs(hash).toString(36);\n}\n\nfunction buildVector(text, dims = DIMENSIONS) {\n  const vec = Array(dims).fill(0);\n  for (const token of normalize(text)) {\n    let hash = 0;\n    for (let i = 0; i < token.length; i++) {\n      hash = ((hash << 5) - hash) + token.charCodeAt(i);\n      hash |= 0;\n    }\n    const idx = Math.abs(hash) % dims;\n    vec[idx] += 1;\n  }\n  const norm = Math.sqrt(vec.reduce((acc, value) => acc + (value * value), 0)) || 1;\n  return vec.map((value) => Number((value / norm).toFixed(6)));\n}\n\nfunction cosine(a, b) {\n  let sum = 0;\n  for (let i = 0; i < Math.max(a.length, b.length); i++) {\n    sum += (a[i] || 0) * (b[i] || 0);\n  }\n  return sum;\n}\n\nfunction overlapScore(queryText, candidateText) {\n  const q = new Set(normalize(queryText));\n  const c = new Set(normalize(candidateText));\n  if (!q.size) return 0;\n  let hits = 0;\n  for (const token of q) if (c.has(token)) hits += 1;\n  return hits / q.size;\n}\n\nfunction getDefaultDocuments() {\n  return [\n  {\n    \"docId\": \"doc-pro-ibuprofeno-v1\",\n    \"title\": \"Prospecto - Ibuprofeno 400 mg\",\n    \"category\": \"prospecto\",\n    \"version\": \"2026-01\",\n    \"tags\": [\n      \"dolor\",\n      \"antiinflamatorio\",\n      \"gastrointestinal\"\n    ],\n    \"sections\": [\n      {\n        \"slug\": \"indicaciones\",\n        \"title\": \"Indicaciones\",\n        \"text\": \"Indicado para dolor leve a moderado, fiebre e inflamacion. Se usa en cuadros osteomusculares y cefaleas, pero no reemplaza la evaluacion clinica cuando hay signos de alarma.\"\n      },\n      {\n        \"slug\": \"efectos-adversos\",\n        \"title\": \"Efectos adversos\",\n        \"text\": \"Puede provocar dolor abdominal, dispepsia, nauseas, gastritis y, con menor frecuencia, vomitos o sangrado digestivo. El riesgo gastrointestinal aumenta con dosis altas o uso prolongado.\"\n      },\n      {\n        \"slug\": \"adultos-mayores\",\n        \"title\": \"Adultos mayores y alertas\",\n        \"text\": \"En personas mayores de 65 anos conviene usar la menor dosis efectiva y vigilar deshidratacion, deterioro renal y signos de hemorragia digestiva. Si hay dolor abdominal persistente, se debe suspender y consultar.\"\n      }\n    ]\n  },\n  {\n    \"docId\": \"doc-pro-metformina-v1\",\n    \"title\": \"Prospecto - Metformina 850 mg\",\n    \"category\": \"prospecto\",\n    \"version\": \"2026-02\",\n    \"tags\": [\n      \"diabetes\",\n      \"nauseas\",\n      \"gastrointestinal\"\n    ],\n    \"sections\": [\n      {\n        \"slug\": \"indicaciones\",\n        \"title\": \"Indicaciones\",\n        \"text\": \"Medicamento para diabetes tipo 2. Se recomienda iniciar en forma gradual y acompanar con plan alimentario y control de glucemia.\"\n      },\n      {\n        \"slug\": \"efectos-adversos\",\n        \"title\": \"Efectos adversos\",\n        \"text\": \"Los efectos adversos mas frecuentes son nauseas, diarrea, distension, molestias gastrointestinales y dolor abdominal. Suelen aparecer al inicio del tratamiento o al subir dosis.\"\n      },\n      {\n        \"slug\": \"poblaciones-especiales\",\n        \"title\": \"Poblaciones especiales\",\n        \"text\": \"En adultos mayores conviene revisar funcion renal y estado de hidratacion antes de ajustar dosis. Si hay intolerancia digestiva marcada, debe reevaluarse el esquema terapeutico.\"\n      }\n    ]\n  },\n  {\n    \"docId\": \"doc-pro-amoxicilina-v1\",\n    \"title\": \"Prospecto - Amoxicilina 500 mg\",\n    \"category\": \"prospecto\",\n    \"version\": \"2026-01\",\n    \"tags\": [\n      \"antibiotico\",\n      \"nauseas\",\n      \"diarrea\"\n    ],\n    \"sections\": [\n      {\n        \"slug\": \"indicaciones\",\n        \"title\": \"Indicaciones\",\n        \"text\": \"Antibiotico betalactamico para infecciones respiratorias, otitis, sinusitis y otras infecciones bacterianas sensibles.\"\n      },\n      {\n        \"slug\": \"efectos-adversos\",\n        \"title\": \"Efectos adversos\",\n        \"text\": \"Puede asociarse a diarrea, nauseas, vomitos, dolor abdominal y rash cutaneo. Ante diarrea intensa o persistente debe considerarse colitis asociada a antibioticos.\"\n      },\n      {\n        \"slug\": \"alertas\",\n        \"title\": \"Alertas\",\n        \"text\": \"Si aparecen reacciones alergicas, disnea o compromiso hemodinamico, suspender y derivar. La presencia de sintomas digestivos aislados no equivale por si sola a una urgencia vital.\"\n      }\n    ]\n  },\n  {\n    \"docId\": \"doc-guia-dolor-toracico-v2\",\n    \"title\": \"Guia - Manejo inicial del dolor toracico\",\n    \"category\": \"guia\",\n    \"version\": \"2026-03\",\n    \"tags\": [\n      \"triage\",\n      \"dolor toracico\",\n      \"cardiologia\"\n    ],\n    \"sections\": [\n      {\n        \"slug\": \"banderas-rojas\",\n        \"title\": \"Banderas rojas\",\n        \"text\": \"Dolor toracico opresivo con irradiacion a brazo, disnea, sudoracion o nauseas debe considerarse de alto riesgo hasta descartar sindrome coronario agudo. Priorizar ECG y evaluacion urgente.\"\n      },\n      {\n        \"slug\": \"triaje\",\n        \"title\": \"Triage inicial\",\n        \"text\": \"Si el paciente presenta hipotension, saturacion baja o compromiso del estado general, la derivacion debe ser inmediata. La guia no reemplaza criterio medico ni protocolos institucionales.\"\n      }\n    ]\n  },\n  {\n    \"docId\": \"doc-guia-nauseas-v1\",\n    \"title\": \"Guia - Nauseas, vomitos y dolor abdominal\",\n    \"category\": \"guia\",\n    \"version\": \"2026-02\",\n    \"tags\": [\n      \"gastrointestinal\",\n      \"nauseas\",\n      \"abdomen\"\n    ],\n    \"sections\": [\n      {\n        \"slug\": \"evaluacion-inicial\",\n        \"title\": \"Evaluacion inicial\",\n        \"text\": \"Nauseas y dolor abdominal requieren valorar hidratacion, fiebre, vomitos persistentes, diarrea y medicamentos recientes. La cronologia de los sintomas ayuda a distinguir eventos adversos de causas infecciosas.\"\n      },\n      {\n        \"slug\": \"signos-de-alarma\",\n        \"title\": \"Signos de alarma\",\n        \"text\": \"Dolor abdominal intenso, sangrado digestivo, rigidez abdominal, compromiso hemodinamico o dificultad respiratoria requieren evaluacion presencial urgente. En adultos mayores el umbral de derivacion debe ser mas bajo.\"\n      }\n    ]\n  },\n  {\n    \"docId\": \"doc-guia-disnea-v1\",\n    \"title\": \"Guia - Disnea y signos de alarma respiratorios\",\n    \"category\": \"guia\",\n    \"version\": \"2026-01\",\n    \"tags\": [\n      \"disnea\",\n      \"respiratorio\",\n      \"urgencia\"\n    ],\n    \"sections\": [\n      {\n        \"slug\": \"triaje-respiratorio\",\n        \"title\": \"Triage respiratorio\",\n        \"text\": \"Disnea de inicio agudo, dolor toracico, sibilancias intensas o saturacion menor a 92 por ciento exigen evaluacion rapida. La presencia de fiebre o tos no reduce el riesgo por si sola.\"\n      },\n      {\n        \"slug\": \"derivacion\",\n        \"title\": \"Derivacion\",\n        \"text\": \"Si la disnea limita hablar, caminar o se acompana de confusion, la consulta debe escalarse como prioritaria. Documentar tiempos, factores precipitantes y antecedentes respiratorios.\"\n      }\n    ]\n  }\n];\n}\n\nfunction chunkDocuments(documents) {\n  const chunks = [];\n\n  for (const doc of documents) {\n    for (const [sectionIndex, section] of (doc.sections || []).entries()) {\n      const rawSentences = String(section.text || '')\n        .split(/(?<=[.!?])\\s+/)\n        .map((sentence) => sentence.trim())\n        .filter(Boolean);\n      const sentences = rawSentences.length\n        ? rawSentences\n        : [String(section.text || '').trim()].filter(Boolean);\n\n      let buffer = [];\n      let chunkCounter = 0;\n\n      const flush = () => {\n        const text = buffer.join(' ').trim();\n        if (!text) return;\n        chunkCounter += 1;\n        chunks.push({\n          chunkId: `${doc.docId}-${section.slug || ('sec' + (sectionIndex + 1))}-c${chunkCounter}`,\n          docId: doc.docId,\n          title: doc.title,\n          category: doc.category,\n          version: doc.version,\n          section: section.title,\n          sectionSlug: section.slug || `sec-${sectionIndex + 1}`,\n          text,\n          tags: doc.tags || [],\n          sourceLabel: `${doc.title} / ${section.title}`\n        });\n        buffer = [];\n      };\n\n      for (const sentence of sentences) {\n        const current = buffer.join(' ');\n        if (current && (current.length + sentence.length + 1) > 320) flush();\n        buffer.push(sentence);\n      }\n      flush();\n    }\n  }\n\n  return chunks;\n}\n\nfunction embedChunks(chunks) {\n  return chunks.map((chunk) => {\n    const textForEmbedding = [chunk.title, chunk.section, ...(chunk.tags || []), chunk.text].join(' ');\n    return {\n      ...chunk,\n      textForEmbedding,\n      vector: buildVector(textForEmbedding)\n    };\n  });\n}\n\nfunction buildRetrieval(question, topK, embeddedChunks, scope, patientContext) {\n  const safeTopK = Math.min(Math.max(Number(topK || 5), 1), 8);\n  const safeScope = ['all', 'prospectos', 'guias'].includes(scope) ? scope : 'all';\n  const patientBits = patientContext && typeof patientContext === 'object'\n    ? Object.entries(patientContext).map(([key, value]) => `${key}: ${value}`).join(', ')\n    : '';\n  const queryText = [question, patientBits].filter(Boolean).join(' | ');\n  const queryVector = buildVector(queryText);\n\n  const filteredChunks = embeddedChunks.filter((chunk) => {\n    if (safeScope === 'all') return true;\n    if (safeScope === 'prospectos') return chunk.category === 'prospecto';\n    if (safeScope === 'guias') return chunk.category === 'guia';\n    return true;\n  });\n\n  const scored = filteredChunks\n    .map((chunk) => {\n      const semanticScore = cosine(queryVector, chunk.vector);\n      const lexicalScore = overlapScore(queryText, chunk.textForEmbedding);\n      const score = Number(((semanticScore * 0.75) + (lexicalScore * 0.25)).toFixed(4));\n      return {\n        ...chunk,\n        semanticScore: Number(semanticScore.toFixed(4)),\n        lexicalScore: Number(lexicalScore.toFixed(4)),\n        score\n      };\n    })\n    .filter((chunk) => chunk.score > 0.04)\n    .sort((a, b) => b.score - a.score);\n\n  const retrievedChunks = scored.slice(0, safeTopK).map((chunk) => {\n    const { vector, textForEmbedding, ...rest } = chunk;\n    return rest;\n  });\n\n  const topScore = retrievedChunks[0] ? retrievedChunks[0].score : 0;\n\n  return {\n    queryText,\n    queryVector,\n    retrievedChunks,\n    retrieval: {\n      topK: safeTopK,\n      returned: retrievedChunks.length,\n      topScore: Number(topScore.toFixed(4)),\n      minScoreThreshold: 0.18,\n      scopeUsed: safeScope,\n      availableChunks: filteredChunks.length\n    },\n    evidenceSufficient: retrievedChunks.length > 0 && topScore >= 0.18\n  };\n}\n\n\n\n    const current = $input.first().json;\n    const chunks = chunkDocuments(current.documents || getDefaultDocuments());\n\n    return [{\n      json: {\n        ...current,\n        chunks,\n        chunking: {\n          strategy: 'semantico-por-secciones',\n          overlap: 0,\n          chunkCount: chunks.length\n        }\n      }\n    }];"
+      },
+      "id": "code-chunk-01",
+      "name": "✂️ Chunking semántico",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        620,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-01",
+      "name": "📤 Respuesta Step 01",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        840,
+        360
+      ]
+    }
+  ],
+  "connections": {
+    "📥 Webhook - Step 01": {
+      "main": [
+        [
+          {
+            "node": "📚 Preparar documentos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📚 Preparar documentos": {
+      "main": [
+        [
+          {
+            "node": "✂️ Chunking semántico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✂️ Chunking semántico": {
+      "main": [
+        [
+          {
+            "node": "📤 Respuesta Step 01",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "3.0.0-selfhosted",
+  "meta": {
+    "templateCreatedBy": "Juanca - AI Automation"
+  },
+  "id": "clase-3-step-01-chunking",
+  "tags": [
+    {
+      "name": "healthcare"
+    },
+    {
+      "name": "rag"
+    },
+    {
+      "name": "clase-3"
+    }
+  ]
+}
