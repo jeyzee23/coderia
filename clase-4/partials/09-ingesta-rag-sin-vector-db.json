@@ -1,0 +1,194 @@
+{
+  "name": "Clase 4 - Ingesta RAG sin vector DB",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Ingesta RAG sin vector DB\n\nWorkflow didactico.\nSolo una caja negra de codigo con pasos declarativos:\n1. normalizar documento\n2. dividir por secciones\n3. crear chunks\n4. calcular embeddings simulados",
+        "height": 240,
+        "width": 390,
+        "color": 7
+      },
+      "id": "note-ingesta-09",
+      "name": "📘 Ingesta",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -280,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Input esperado\n\n- `markdown` o `text`\n- `documentTitle` opcional\n- `category` opcional\n\nSalida:\n- `documents[]`\n- `chunks[]`\n- `embeddedChunks[]`",
+        "height": 220,
+        "width": 340,
+        "color": 4
+      },
+      "id": "note-input-09",
+      "name": "📝 Contrato",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        520,
+        -160
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rag-ingesta-documental",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-09",
+      "name": "📥 Webhook - Ingesta",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        180,
+        360
+      ],
+      "webhookId": "rag-ingesta-documental"
+    },
+    {
+      "parameters": {
+        "jsCode": "// PASO 1. Leer el input de forma flexible.\nconst input = $input.first().json.body || $input.first().json;\nconst startedAtMs = Date.now();\n\n// PASO 2. Definir helpers simples y declarativos.\nfunction slugify(text) {\n  return String(text || 'documento')\n    .normalize('NFD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .toLowerCase()\n    .replace(/[^a-z0-9]+/g, '-')\n    .replace(/(^-|-$)/g, '') || 'documento';\n}\n\nfunction normalize(text) {\n  const replacements = {\n    panza: 'abdominal',\n    barriga: 'abdominal',\n    estomago: 'abdominal',\n    nausea: 'nauseas',\n    vomitos: 'vomito',\n    geriatrico: 'adulto'\n  };\n\n  const cleaned = String(text || '')\n    .normalize('NFD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .toLowerCase()\n    .replace(/[^a-z0-9\\s]/g, ' ')\n    .replace(/\\s+/g, ' ')\n    .trim();\n\n  return cleaned ? cleaned.split(' ').map((token) => replacements[token] || token) : [];\n}\n\nfunction buildVector(text, dims = 64) {\n  const vector = Array(dims).fill(0);\n\n  for (const token of normalize(text)) {\n    let hash = 0;\n    for (let i = 0; i < token.length; i++) hash = ((hash << 5) - hash) + token.charCodeAt(i);\n    vector[Math.abs(hash) % dims] += 1;\n  }\n\n  const norm = Math.sqrt(vector.reduce((acc, value) => acc + (value * value), 0)) || 1;\n  return vector.map((value) => Number((value / norm).toFixed(6)));\n}\n\nfunction splitIntoSections(text) {\n  const clean = String(text || '').replace(/\\r/g, '').trim();\n  if (!clean) return [];\n\n  const blocks = clean.split(/\\n\\s*\\n+/).map((block) => block.trim()).filter(Boolean);\n  return blocks.map((block, index) => ({\n    slug: `bloque-${index + 1}`,\n    title: `Bloque ${index + 1}`,\n    text: block\n  }));\n}\n\nfunction chunkSections(sections, doc) {\n  const chunks = [];\n\n  for (const [sectionIndex, section] of sections.entries()) {\n    const sentences = String(section.text || '')\n      .split(/(?<=[.!?])\\s+/)\n      .map((sentence) => sentence.trim())\n      .filter(Boolean);\n\n    const effectiveSentences = sentences.length ? sentences : [String(section.text || '').trim()].filter(Boolean);\n    let buffer = [];\n    let counter = 0;\n\n    const flush = () => {\n      const text = buffer.join(' ').trim();\n      if (!text) return;\n      counter += 1;\n      chunks.push({\n        chunkId: `${doc.docId}-${section.slug || ('sec' + (sectionIndex + 1))}-c${counter}`,\n        docId: doc.docId,\n        title: doc.title,\n        category: doc.category,\n        version: doc.version,\n        section: section.title,\n        sectionSlug: section.slug,\n        text,\n        tags: doc.tags,\n        sourceLabel: `${doc.title} / ${section.title}`\n      });\n      buffer = [];\n    };\n\n    for (const sentence of effectiveSentences) {\n      const current = buffer.join(' ');\n      if (current && (current.length + sentence.length + 1) > 320) flush();\n      buffer.push(sentence);\n    }\n\n    flush();\n  }\n\n  return chunks;\n}\n\n// PASO 3. Transformar texto libre en un documento estructurado.\nconst sourceText = input.anonymizedMarkdown || input.markdown || input.anonymizedText || input.originalText || input.text || '';\nconst sections = Array.isArray(input.documents?.[0]?.sections)\n  ? input.documents[0].sections\n  : splitIntoSections(sourceText);\n\nconst valid = sections.length > 0;\nif (!valid) {\n  return [{\n    json: {\n      success: false,\n      valid: false,\n      error: 'Se requiere markdown, text o documents[].sections[]'\n    }\n  }];\n}\n\nconst document = {\n  docId: input.docId || slugify(input.documentTitle || input.title || 'documento-clinico'),\n  title: input.documentTitle || input.title || 'Documento clinico parseado',\n  category: input.category || 'prospecto',\n  version: input.version || new Date().toISOString().slice(0, 10),\n  tags: Array.isArray(input.tags) ? input.tags : ['parseado', 'clinico'],\n  sections\n};\n\n// PASO 4. Crear chunks semanticos.\nconst chunks = chunkSections(document.sections, document);\n\n// PASO 5. Crear embeddings simulados para cada chunk.\nconst embeddedChunks = chunks.map((chunk) => {\n  const textForEmbedding = [chunk.title, chunk.section, ...(chunk.tags || []), chunk.text].join(' ');\n  return {\n    ...chunk,\n    textForEmbedding,\n    vector: buildVector(textForEmbedding)\n  };\n});\n\nreturn [{\n  json: {\n    success: true,\n    valid: true,\n    documents: [document],\n    chunks,\n    embeddedChunks,\n    ingestion: {\n      strategy: 'semantico-por-secciones',\n      overlap: 0,\n      chunkCount: chunks.length,\n      embeddedCount: embeddedChunks.length,\n      latencyMs: Math.max(Date.now() - startedAtMs, 0)\n    },\n    contractOut: {\n      step: '09-ingesta-rag-sin-vector-db',\n      next: '10-rag-consulta-sin-vector-db',\n      expectsNext: '{question, embeddedChunks[], patientContext?, topK?}'\n    }\n  }\n}];"
+      },
+      "id": "code-main-09",
+      "name": "⚙️ Caja negra - ingesta documental",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "if-valid-09",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-main-09",
+      "name": "❓ ¿Salida válida?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        760,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-error-09",
+      "name": "❌ Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-ok-09",
+      "name": "📤 Respuesta",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "📥 Webhook - Ingesta": {
+      "main": [
+        [
+          {
+            "node": "⚙️ Caja negra - ingesta documental",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚙️ Caja negra - ingesta documental": {
+      "main": [
+        [
+          {
+            "node": "❓ ¿Salida válida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ ¿Salida válida?": {
+      "main": [
+        [
+          {
+            "node": "📤 Respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "❌ Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "4.1.0-declarativo",
+  "meta": {
+    "templateCreatedBy": "Juanca - AI Automation"
+  },
+  "id": "clase-4-ingesta-rag-sin-vector-db",
+  "tags": [
+    {
+      "name": "healthcare"
+    },
+    {
+      "name": "rag"
+    },
+    {
+      "name": "clase-4"
+    }
+  ]
+}

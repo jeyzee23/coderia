@@ -1,0 +1,325 @@
+{
+  "name": "Clase 4 - Consulta RAG sin vector DB",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Consulta RAG sin vector DB\n\nWorkflow didactico.\nSolo dos cajas negras de codigo:\n1. retrieval top-k\n2. validacion + fallback",
+        "height": 230,
+        "width": 390,
+        "color": 7
+      },
+      "id": "note-main-10",
+      "name": "📘 Consulta",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -300,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Que explicar en clase\n\n- retrieval no responde: selecciona contexto\n- la LLM responde solo con ese contexto\n- si la salida no es trazable, se descarta",
+        "height": 210,
+        "width": 340,
+        "color": 2
+      },
+      "id": "note-flow-10",
+      "name": "🛡️ Guardrails",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1260,
+        -170
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "rag-consulta-documental",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-10",
+      "name": "📥 Webhook - Consulta",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        180,
+        360
+      ],
+      "webhookId": "rag-consulta-documental"
+    },
+    {
+      "parameters": {
+        "jsCode": "// PASO 1. Leer el input y fijar defaults simples.\nconst input = $input.first().json.body || $input.first().json;\nconst question = String(input.question || '').trim();\nconst embeddedChunks = Array.isArray(input.embeddedChunks) ? input.embeddedChunks : [];\nconst patientContext = input.patientContext && typeof input.patientContext === 'object'\n  ? input.patientContext\n  : { age: 60, sex: 'masculino' };\nconst topK = Math.min(Math.max(Number(input.topK || 6), 1), 12);\nconst scope = ['all', 'prospectos', 'guias'].includes(input.scope) ? input.scope : 'all';\nconst startedAtMs = Date.now();\n\n// PASO 2. Validar que haya pregunta y chunks.\nif (!question || embeddedChunks.length === 0) {\n  return [{\n    json: {\n      success: false,\n      valid: false,\n      error: 'Se requiere question y embeddedChunks[]'\n    }\n  }];\n}\n\n// PASO 3. Definir funciones declarativas para similitud.\nfunction normalize(text) {\n  const replacements = {\n    panza: 'abdominal', barriga: 'abdominal', estomago: 'abdominal', pecho: 'toracico', torax: 'toracico',\n    nausea: 'nauseas', vomitos: 'vomito', vomitar: 'vomito', gastrica: 'gastrointestinal', gastricas: 'gastrointestinal',\n    anciano: 'adulto', geriatrico: 'adulto', remedio: 'medicamento', remedios: 'medicamentos'\n  };\n\n  const cleaned = String(text || '')\n    .normalize('NFD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .toLowerCase()\n    .replace(/[^a-z0-9\\s]/g, ' ')\n    .replace(/\\s+/g, ' ')\n    .trim();\n\n  return cleaned ? cleaned.split(' ').map((token) => replacements[token] || token) : [];\n}\n\nfunction buildVector(text, dims = 64) {\n  const vector = Array(dims).fill(0);\n  for (const token of normalize(text)) {\n    let hash = 0;\n    for (let i = 0; i < token.length; i++) hash = ((hash << 5) - hash) + token.charCodeAt(i);\n    vector[Math.abs(hash) % dims] += 1;\n  }\n  const norm = Math.sqrt(vector.reduce((acc, value) => acc + (value * value), 0)) || 1;\n  return vector.map((value) => Number((value / norm).toFixed(6)));\n}\n\nfunction cosine(a, b) {\n  let sum = 0;\n  for (let i = 0; i < Math.max(a.length, b.length); i++) sum += (a[i] || 0) * (b[i] || 0);\n  return sum;\n}\n\nfunction lexicalOverlap(queryText, candidateText) {\n  const queryTokens = new Set(normalize(queryText));\n  const candidateTokens = new Set(normalize(candidateText));\n  if (!queryTokens.size) return 0;\n  let hits = 0;\n  for (const token of queryTokens) if (candidateTokens.has(token)) hits += 1;\n  return hits / queryTokens.size;\n}\n\n// PASO 4. Construir la consulta efectiva.\nconst patientBits = Object.entries(patientContext).map(([key, value]) => `${key}: ${value}`).join(', ');\nconst queryText = [question, patientBits].filter(Boolean).join(' | ');\nconst queryVector = buildVector(queryText);\n\n// PASO 5. Filtrar por scope y rankear chunks.\nconst scopedChunks = embeddedChunks.filter((chunk) => {\n  if (scope === 'prospectos') return chunk.category === 'prospecto';\n  if (scope === 'guias') return chunk.category === 'guia';\n  return true;\n});\n\nconst scoredChunks = scopedChunks\n  .map((chunk) => {\n    const baseText = chunk.textForEmbedding || [chunk.title, chunk.section, ...(chunk.tags || []), chunk.text].join(' ');\n    const semanticScore = cosine(queryVector, chunk.vector || buildVector(baseText));\n    const lexicalScore = lexicalOverlap(queryText, baseText);\n    const ageBoost = patientBits.includes('60') && /adultos? mayores?|geriatr/i.test(baseText) ? 0.04 : 0;\n    const score = Number(((semanticScore * 0.72) + (lexicalScore * 0.24) + ageBoost).toFixed(4));\n    return { ...chunk, semanticScore: Number(semanticScore.toFixed(4)), lexicalScore: Number(lexicalScore.toFixed(4)), score };\n  })\n  .filter((chunk) => chunk.score > 0.05)\n  .sort((a, b) => b.score - a.score);\n\nconst retrievedChunks = scoredChunks.slice(0, topK);\nconst topScore = retrievedChunks[0] ? retrievedChunks[0].score : 0;\nconst evidenceSufficient = retrievedChunks.length > 0 && topScore >= 0.18;\n\nreturn [{\n  json: {\n    success: true,\n    valid: true,\n    question,\n    patientContext,\n    topK,\n    scope,\n    startedAtMs,\n    retrievedChunks,\n    retrieval: {\n      topK,\n      returned: retrievedChunks.length,\n      topScore: Number(topScore.toFixed(4)),\n      minScoreThreshold: 0.18,\n      scopeUsed: scope,\n      availableChunks: scopedChunks.length\n    },\n    evidenceSufficient\n  }\n}];"
+      },
+      "id": "code-retrieval-10",
+      "name": "⚙️ Caja negra - retrieval top-k",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "if-valid-10",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid-10",
+      "name": "❓ ¿Entrada válida?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        760,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "if-evidence-10",
+              "leftValue": "={{ $json.evidenceSufficient }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-evidence-10",
+      "name": "❓ ¿Hay evidencia suficiente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        980,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "HTTP-Referer",
+              "value": "http://localhost:5681"
+            },
+            {
+              "name": "X-Title",
+              "value": "Clase 4 - Consulta RAG"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.0-flash-lite-001', temperature: 0.1, max_tokens: 700, messages: [ { role: 'system', content: 'Sos un asistente de busqueda documental biomedica. No des diagnosticos ni indicaciones medicas. Responde SOLO con evidencia recuperada y devolve EXCLUSIVAMENTE JSON valido con este formato: {\"answer\":\"...\",\"sources\":[{\"chunkId\":\"...\"}],\"confidence\":\"alta|media|baja\",\"requiresHumanReview\":true}.' }, { role: 'user', content: 'PREGUNTA:\\n' + $json.question + '\\n\\nCONTEXTO:\\n' + $json.retrievedChunks.map((chunk, idx) => '[' + (idx + 1) + '] ' + chunk.chunkId + ' | ' + chunk.title + ' | ' + chunk.section + '\\n' + chunk.text).join('\\n\\n') + '\\n\\nDevuelve solo JSON con trazabilidad.' } ] }) }}",
+        "options": {
+          "timeout": 25000
+        }
+      },
+      "id": "http-llm-10",
+      "name": "🤖 OpenRouter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1200,
+        180
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// PASO 1. Leer retrieval y, si existe, la salida de la LLM.\nconst retrievalNode = $('⚙️ Caja negra - retrieval top-k').first().json;\nconst llmItems = $('🤖 OpenRouter').all();\nconst llmRaw = llmItems.length ? (llmItems[0].json?.choices?.[0]?.message?.content || '') : '';\n\n// PASO 2. Intentar extraer JSON del texto del modelo.\nfunction extractJson(text) {\n  if (!text) return null;\n  try { return JSON.parse(text); } catch (error) {}\n\n  const cleaned = String(text).replace(/^```json/i, '').replace(/```$/i, '').trim();\n  try { return JSON.parse(cleaned); } catch (error) {}\n\n  const match = cleaned.match(/\\{[\\s\\S]*\\}/);\n  if (match) {\n    try { return JSON.parse(match[0]); } catch (error) {}\n  }\n\n  return null;\n}\n\n// PASO 3. Validar la salida contra las fuentes recuperadas.\nconst parsed = extractJson(llmRaw) || {};\nconst retrievedChunks = retrievalNode.retrievedChunks || [];\nconst sourceMap = new Map(retrievedChunks.map((chunk) => [chunk.chunkId, chunk]));\nconst errors = [];\n\nif (!retrievalNode.evidenceSufficient) errors.push('insufficient-evidence');\nif (retrievalNode.evidenceSufficient) {\n  if (!parsed.answer || typeof parsed.answer !== 'string' || !parsed.answer.trim()) errors.push('missing-answer');\n  if (!Array.isArray(parsed.sources) || parsed.sources.length === 0) errors.push('missing-sources');\n}\n\nconst groundedSources = Array.isArray(parsed.sources)\n  ? parsed.sources\n      .map((source) => sourceMap.get(source.chunkId))\n      .filter(Boolean)\n      .map((chunk) => ({\n        chunkId: chunk.chunkId,\n        docId: chunk.docId,\n        title: chunk.title,\n        section: chunk.section,\n        score: chunk.score,\n        evidence: String(chunk.text || '').slice(0, 180)\n      }))\n  : [];\n\nif (retrievalNode.evidenceSufficient && groundedSources.length === 0) errors.push('sources-not-grounded');\n\n// PASO 4. Si algo falla, devolver fallback seguro.\nconst fallbackUsed = errors.length > 0;\n\nreturn [{\n  json: {\n    success: true,\n    question: retrievalNode.question,\n    patientContext: retrievalNode.patientContext,\n    answer: fallbackUsed\n      ? 'No se pudo validar una respuesta trazable del modelo. Dejo los fragmentos con mejor score para revision humana. Este sistema no reemplaza evaluacion profesional.'\n      : parsed.answer.trim(),\n    sources: fallbackUsed\n      ? retrievedChunks.slice(0, 3).map((chunk) => ({\n          chunkId: chunk.chunkId,\n          docId: chunk.docId,\n          title: chunk.title,\n          section: chunk.section,\n          score: chunk.score,\n          evidence: String(chunk.text || '').slice(0, 180)\n        }))\n      : groundedSources.slice(0, 3),\n    confidence: fallbackUsed ? 'baja' : (['alta', 'media', 'baja'].includes(parsed.confidence) ? parsed.confidence : 'media'),\n    fallbackUsed,\n    fallbackReason: fallbackUsed ? errors[0] : null,\n    requiresHumanReview: true,\n    retrieval: retrievalNode.retrieval,\n    log: {\n      event: 'rag_consulta_documental',\n      ts: new Date().toISOString(),\n      latencyMs: Math.max(Date.now() - (retrievalNode.startedAtMs || Date.now()), 0),\n      returnedChunks: retrievalNode.retrieval ? retrievalNode.retrieval.returned : 0,\n      topScore: retrievalNode.retrieval ? retrievalNode.retrieval.topScore : 0,\n      fallbackUsed,\n      fallbackReason: fallbackUsed ? errors[0] : null,\n      sourceType: fallbackUsed ? 'guardrail-fallback' : 'draft-validated'\n    }\n  }\n}];"
+      },
+      "id": "code-guardrails-10",
+      "name": "⚙️ Caja negra - validacion y fallback",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1420,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-error-10",
+      "name": "❌ Error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        980,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-ok-10",
+      "name": "📤 Respuesta",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1640,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "📥 Webhook - Consulta": {
+      "main": [
+        [
+          {
+            "node": "⚙️ Caja negra - retrieval top-k",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚙️ Caja negra - retrieval top-k": {
+      "main": [
+        [
+          {
+            "node": "❓ ¿Entrada válida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ ¿Entrada válida?": {
+      "main": [
+        [
+          {
+            "node": "❓ ¿Hay evidencia suficiente?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "❌ Error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ ¿Hay evidencia suficiente?": {
+      "main": [
+        [
+          {
+            "node": "🤖 OpenRouter",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "⚙️ Caja negra - validacion y fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 OpenRouter": {
+      "main": [
+        [
+          {
+            "node": "⚙️ Caja negra - validacion y fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚙️ Caja negra - validacion y fallback": {
+      "main": [
+        [
+          {
+            "node": "📤 Respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "4.1.1-declarativo",
+  "meta": {
+    "templateCreatedBy": "Juanca - AI Automation"
+  },
+  "id": "clase-4-consulta-rag-sin-vector-db",
+  "tags": [
+    {
+      "name": "healthcare"
+    },
+    {
+      "name": "rag"
+    },
+    {
+      "name": "clase-4"
+    }
+  ]
+}

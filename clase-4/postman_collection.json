@@ -1,0 +1,321 @@
+{
+  "info": {
+    "name": "Clase 4 - Parsing + RAG sin vector DB (n8n Local)",
+    "description": "Coleccion Postman para probar los workflows de clase 4 en n8n local.\n\nOrden sugerido:\n1. 09 - ingesta documental\n2. 10 - consulta RAG sobre embeddedChunks\n3. 11 - LlamaCloud + RAG end-to-end\n\nPuerto por defecto: 5681.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "clase-4-parsing-rag-local"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5681",
+      "type": "string"
+    },
+    {
+      "key": "samplePdfUrl",
+      "value": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "09 - Ingesta documental",
+      "description": "Convierte markdown o texto en documentos, chunks y embeddedChunks.",
+      "item": [
+        {
+          "name": "09 - Ingesta con markdown simple",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('success true', () => pm.expect(b.success).to.eql(true));",
+                  "pm.test('chunks > 0', () => pm.expect(b.chunks.length).to.be.greaterThan(0));",
+                  "pm.test('embeddedChunks > 0', () => pm.expect(b.embeddedChunks.length).to.be.greaterThan(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/rag-ingesta-documental",
+              "host": [
+                "{{baseUrl}}/webhook/rag-ingesta-documental"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documentTitle\": \"Prospecto demo\",\n  \"category\": \"prospecto\",\n  \"markdown\": \"Puede provocar dolor abdominal y nauseas en adultos mayores.\\n\\nConsultar si hay sangrado digestivo.\"\n}"
+            }
+          }
+        },
+        {
+          "name": "09 - Ingesta con texto clínico estructurado",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('document existe', () => pm.expect(b.documents[0]).to.be.an('object'));",
+                  "pm.test('ingestion existe', () => pm.expect(b.ingestion).to.be.an('object'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/rag-ingesta-documental",
+              "host": [
+                "{{baseUrl}}/webhook/rag-ingesta-documental"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"documentTitle\": \"Monografia simulada\",\n  \"text\": \"Indicaciones: medicamento para diabetes tipo 2.\\n\\nEfectos adversos: puede generar nauseas, diarrea y dolor abdominal.\\n\\nPoblaciones especiales: en adultos mayores controlar funcion renal.\"\n}"
+            }
+          }
+        },
+        {
+          "name": "09 - Error por falta de texto",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                  "const b = pm.response.json();",
+                  "pm.test('valid false', () => pm.expect(b.valid).to.eql(false));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/rag-ingesta-documental",
+              "host": [
+                "{{baseUrl}}/webhook/rag-ingesta-documental"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{ }"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "10 - Consulta RAG",
+      "description": "Consulta sobre embeddedChunks generados previamente.",
+      "item": [
+        {
+          "name": "10 - Consulta con embeddedChunks demo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('answer existe', () => pm.expect(b.answer).to.be.a('string'));",
+                  "pm.test('retrieval existe', () => pm.expect(b.retrieval).to.be.an('object'));",
+                  "pm.test('requiresHumanReview true', () => pm.expect(b.requiresHumanReview).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/rag-consulta-documental",
+              "host": [
+                "{{baseUrl}}/webhook/rag-consulta-documental"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"Que efectos adversos gastrointestinales se mencionan en adultos mayores?\",\n  \"topK\": 4,\n  \"scope\": \"prospectos\",\n  \"patientContext\": { \"age\": 60, \"sex\": \"masculino\" },\n  \"embeddedChunks\": [\n    {\n      \"chunkId\": \"prospecto-demo-efectos-c1\",\n      \"docId\": \"prospecto-demo\",\n      \"title\": \"Prospecto demo\",\n      \"category\": \"prospecto\",\n      \"version\": \"2026-04-28\",\n      \"section\": \"Efectos adversos\",\n      \"sectionSlug\": \"efectos-adversos\",\n      \"text\": \"Puede provocar dolor abdominal y nauseas en adultos mayores.\",\n      \"tags\": [\"parseado\", \"clinico\"],\n      \"sourceLabel\": \"Prospecto demo / Efectos adversos\",\n      \"textForEmbedding\": \"Prospecto demo Efectos adversos parseado clinico Puede provocar dolor abdominal y nauseas en adultos mayores.\",\n      \"vector\": [0,0.242536,0,0,0,0,0,0.485071,0,0.242536,0,0,0,0,0,0,0,0.242536,0.242536,0,0,0,0,0,0,0.242536,0,0,0,0.242536,0,0,0,0,0.242536,0.242536,0.242536,0,0.242536,0,0,0.242536,0,0,0,0,0,0,0,0,0,0,0,0,0.242536,0,0,0.242536,0,0,0,0,0,0]\n    },\n    {\n      \"chunkId\": \"prospecto-demo-alertas-c1\",\n      \"docId\": \"prospecto-demo\",\n      \"title\": \"Prospecto demo\",\n      \"category\": \"prospecto\",\n      \"version\": \"2026-04-28\",\n      \"section\": \"Alertas\",\n      \"sectionSlug\": \"alertas\",\n      \"text\": \"Consultar si hay sangrado digestivo.\",\n      \"tags\": [\"parseado\", \"clinico\"],\n      \"sourceLabel\": \"Prospecto demo / Alertas\",\n      \"textForEmbedding\": \"Prospecto demo Alertas parseado clinico Consultar si hay sangrado digestivo.\",\n      \"vector\": [0,0.288675,0,0,0,0,0,0.288675,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.288675,0,0,0.288675,0,0,0,0.288675,0,0,0.288675,0,0.288675,0.57735,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.288675,0,0,0,0,0,0,0,0,0,0,0,0,0]\n    }\n  ]\n}"
+            }
+          }
+        },
+        {
+          "name": "10 - Error por falta de question",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));",
+                  "const b = pm.response.json();",
+                  "pm.test('valid false', () => pm.expect(b.valid).to.eql(false));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/rag-consulta-documental",
+              "host": [
+                "{{baseUrl}}/webhook/rag-consulta-documental"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"embeddedChunks\": []\n}"
+            }
+          }
+        },
+        {
+          "name": "10 - Evidencia insuficiente",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('fallbackUsed true', () => pm.expect(b.fallbackUsed).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/rag-consulta-documental",
+              "host": [
+                "{{baseUrl}}/webhook/rag-consulta-documental"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"Que dice sobre dermatologia pediatrica?\",\n  \"topK\": 3,\n  \"embeddedChunks\": [\n    {\n      \"chunkId\": \"chunk-1\",\n      \"docId\": \"doc-1\",\n      \"title\": \"Prospecto demo\",\n      \"category\": \"prospecto\",\n      \"section\": \"Efectos adversos\",\n      \"text\": \"Puede provocar dolor abdominal y nauseas.\",\n      \"tags\": [\"clinico\"],\n      \"textForEmbedding\": \"Prospecto demo Efectos adversos clinico Puede provocar dolor abdominal y nauseas.\",\n      \"vector\": [0.1,0.2,0.1,0.2]\n    }\n  ]\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "11 - LlamaCloud + RAG end-to-end",
+      "description": "Parsing de documento por URL y respuesta sobre el documento parseado en la misma ejecucion.",
+      "item": [
+        {
+          "name": "11 - E2E con PDF dummy",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/llamacloud-rag-e2e",
+              "host": [
+                "{{baseUrl}}/webhook/llamacloud-rag-e2e"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"fileUrl\": \"{{samplePdfUrl}}\",\n  \"question\": \"Que contenido tiene el documento?\",\n  \"topK\": 4,\n  \"patientContext\": { \"age\": 60, \"sex\": \"masculino\" }\n}"
+            }
+          }
+        },
+        {
+          "name": "11 - Error por falta de fileUrl",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 400', () => pm.response.to.have.status(400));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/llamacloud-rag-e2e",
+              "host": [
+                "{{baseUrl}}/webhook/llamacloud-rag-e2e"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"question\": \"Que contenido tiene el documento?\"\n}"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

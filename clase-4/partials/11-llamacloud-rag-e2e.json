@@ -1,0 +1,650 @@
+{
+  "name": "Clase 4 - LlamaCloud + RAG end-to-end",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Pipeline completo\n\nWebhook -> LlamaCloud -> parsing -> anonimización -> chunking -> retrieval -> LLM -> guardrails -> respuesta.\n\nPensado para demo de clase sin vector DB.",
+        "height": 230,
+        "width": 390,
+        "color": 7
+      },
+      "id": "note-main-11",
+      "name": "📘 E2E",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -360,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Input esperado\n\n```json\n{\n  \"fileUrl\": \"https://...pdf\",\n  \"question\": \"...\",\n  \"patientContext\": { \"age\": 60, \"sex\": \"masculino\" },\n  \"topK\": 6,\n  \"category\": \"prospecto\"\n}\n```\n\nBusca solo dentro del documento parseado en esa ejecucion.",
+        "height": 280,
+        "width": 360,
+        "color": 4
+      },
+      "id": "note-input-11",
+      "name": "📝 Input",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        120,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "llamacloud-rag-e2e",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-11",
+      "name": "📥 Webhook - E2E",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        160,
+        420
+      ],
+      "webhookId": "llamacloud-rag-e2e"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json.body || $input.first().json;\nconst question = String(input.question || '').trim();\nconst fileUrl = String(input.fileUrl || '').trim();\nreturn [{\n  json: {\n    ...input,\n    question,\n    fileUrl,\n    patientContext: input.patientContext && typeof input.patientContext === 'object' ? input.patientContext : { age: 60, sex: 'masculino' },\n    topK: Math.min(Math.max(Number(input.topK || 6), 1), 12),\n    category: input.category || 'prospecto',\n    valid: Boolean(question) && Boolean(fileUrl),\n    startedAtMs: Date.now()\n  }\n}];"
+      },
+      "id": "code-validate-11",
+      "name": "✅ Validar input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        380,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "if-valid-11",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid-11",
+      "name": "❓ ¿Input válido?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        600,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cloud.llamaindex.ai/api/parsing/upload",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer llx-y03xmyapkkX8sNnhq9J4QGaXIq48KkQjXeHgd5awxO8qO33i"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ input_url: $json.fileUrl, output_schema: { text: 'string', metadata: 'object' }, tier: 'premium' }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "http-upload-11",
+      "name": "📤 Upload a LlamaCloud",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        840,
+        320
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const current = $input.first().json;\nconst jobId = current?.job?.id || current?.id;\nreturn [{ json: { jobId, validJob: Boolean(jobId) } }];"
+      },
+      "id": "code-job-11",
+      "name": "🎯 Extraer Job ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1060,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "amount": 8,
+        "unit": "seconds"
+      },
+      "id": "wait-11",
+      "name": "⏳ Esperar 8s",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1280,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.cloud.llamaindex.ai/api/parsing/job/{{ $json.jobId }}/result",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer llx-y03xmyapkkX8sNnhq9J4QGaXIq48KkQjXeHgd5awxO8qO33i"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "http-result-11",
+      "name": "📥 Obtener resultado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1500,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "keepOnlySet": false,
+        "values": {
+          "string": [
+            {
+              "name": "question",
+              "value": "={{ $('✅ Validar input').first().json.question }}"
+            },
+            {
+              "name": "fileUrl",
+              "value": "={{ $('✅ Validar input').first().json.fileUrl }}"
+            },
+            {
+              "name": "category",
+              "value": "={{ $('✅ Validar input').first().json.category }}"
+            },
+            {
+              "name": "documentTitle",
+              "value": "={{ $('✅ Validar input').first().json.documentTitle || 'Documento parseado desde LlamaCloud' }}"
+            }
+          ],
+          "number": [
+            {
+              "name": "topK",
+              "value": "={{ $('✅ Validar input').first().json.topK }}"
+            },
+            {
+              "name": "startedAtMs",
+              "value": "={{ $('✅ Validar input').first().json.startedAtMs }}"
+            }
+          ],
+          "json": [
+            {
+              "name": "patientContext",
+              "value": "={{ $('✅ Validar input').first().json.patientContext }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-context-11",
+      "name": "🧩 Reinyectar contexto",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [
+        1720,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function slugify(text) {\n  return String(text || 'doc')\n    .normalize('NFD')\n    .replace(/[\\u0300-\\u036f]/g, '')\n    .toLowerCase()\n    .replace(/[^a-z0-9]+/g, '-')\n    .replace(/(^-|-$)/g, '') || 'doc';\n}\n\nfunction splitMarkdownSections(markdown) {\n  const clean = String(markdown || '').replace(/\\r/g, '').trim();\n  if (!clean) return [];\n  const lines = clean.split('\\n');\n  const sections = [];\n  let currentTitle = 'Contenido principal';\n  let buffer = [];\n\n  const flush = () => {\n    const text = buffer.join('\\n').trim();\n    if (!text) return;\n    sections.push({ slug: slugify(currentTitle), title: currentTitle, text });\n    buffer = [];\n  };\n\n  for (const rawLine of lines) {\n    const line = rawLine.trimEnd();\n    const heading = line.match(/^#{1,6}\\s+(.+)$/);\n    if (heading) {\n      flush();\n      currentTitle = heading[1].trim();\n      continue;\n    }\n    buffer.push(line);\n  }\n  flush();\n\n  return sections.length\n    ? sections\n    : clean.split(/\\n\\s*\\n+/).map((block, idx) => ({ slug: `bloque-${idx + 1}`, title: `Bloque ${idx + 1}`, text: block.trim() })).filter((section) => section.text);\n}\n\nfunction anonymize(text) {\n  const patterns = [\n    { pattern: /\\b\\d{1,2}\\.\\d{3}\\.\\d{3}\\b/g, replacement: '[DNI]' },\n    { pattern: /\\b\\d{7,8}\\b/g, replacement: '[DNI]' },\n    { pattern: /\\b\\d{2}-\\d{7,8}-\\d\\b/g, replacement: '[CUIT]' },\n    { pattern: /\\b(\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4})\\b/gi, replacement: '[FECHA]' },\n    { pattern: /\\b[\\w.-]+@[\\w.-]+\\.\\w+\\b/gi, replacement: '[EMAIL]' },\n    { pattern: /\\b(Sr\\.?|Sra\\.?|Dr\\.?|Dra\\.?)\\s+[A-Z][a-z]+ [A-Z][a-z]+\\b/g, replacement: '[NOMBRE]' }\n  ];\n\n  let output = String(text || '');\n  for (const { pattern, replacement } of patterns) output = output.replace(pattern, replacement);\n  return output;\n}\n\nconst data = $input.first().json;\nconst markdown = anonymize(data.markdown || data.md || '');\nconst originalText = anonymize(data.text || data.txt || '');\nconst sections = splitMarkdownSections(markdown || originalText);\n\nreturn [{\n  json: {\n    ...data,\n    anonymizedMarkdown: markdown,\n    anonymizedText: originalText,\n    documents: [{\n      docId: slugify(data.documentTitle || 'documento-parseado'),\n      title: data.documentTitle || 'Documento parseado desde LlamaCloud',\n      category: data.category || 'prospecto',\n      version: new Date().toISOString().slice(0, 10),\n      tags: ['parseado', 'clinico'],\n      sections\n    }],\n    parseMeta: {\n      pageCount: Array.isArray(data.json) ? data.json.length : 1,\n      sourceFormat: String(data.fileUrl || '').split('.').pop() || 'unknown'\n    }\n  }\n}];"
+      },
+      "id": "code-parse-11",
+      "name": "📊 Parsear y anonimizar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function stripAccents(text) {\n  return String(text || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '');\n}\n\nfunction normalize(text) {\n  const replacements = {\n    panza: 'abdominal',\n    barriga: 'abdominal',\n    estomago: 'abdominal',\n    nausea: 'nauseas',\n    vomitos: 'vomito',\n    gastricas: 'gastrointestinal',\n    gastrica: 'gastrointestinal',\n    anciano: 'adulto',\n    geriatrico: 'adulto'\n  };\n\n  const cleaned = stripAccents(text)\n    .toLowerCase()\n    .replace(/[^a-z0-9\\s]/g, ' ')\n    .replace(/\\s+/g, ' ')\n    .trim();\n\n  return cleaned ? cleaned.split(' ').map((token) => replacements[token] || token) : [];\n}\n\nfunction buildVector(text, dims = 64) {\n  const vec = Array(dims).fill(0);\n  for (const token of normalize(text)) {\n    let hash = 0;\n    for (let i = 0; i < token.length; i++) {\n      hash = ((hash << 5) - hash) + token.charCodeAt(i);\n      hash |= 0;\n    }\n    const idx = Math.abs(hash) % dims;\n    vec[idx] += 1;\n  }\n  const norm = Math.sqrt(vec.reduce((acc, value) => acc + (value * value), 0)) || 1;\n  return vec.map((value) => Number((value / norm).toFixed(6)));\n}\n\nfunction cosine(a, b) {\n  let sum = 0;\n  for (let i = 0; i < Math.max(a.length, b.length); i++) sum += (a[i] || 0) * (b[i] || 0);\n  return sum;\n}\n\nfunction overlapScore(queryText, candidateText) {\n  const q = new Set(normalize(queryText));\n  const c = new Set(normalize(candidateText));\n  if (!q.size) return 0;\n  let hits = 0;\n  for (const token of q) if (c.has(token)) hits += 1;\n  return hits / q.size;\n}\n\nfunction chunkDocuments(documents) {\n  const chunks = [];\n  for (const doc of documents) {\n    for (const [sectionIndex, section] of (doc.sections || []).entries()) {\n      const rawSentences = String(section.text || '').split(/(?<=[.!?])\\s+/).map((sentence) => sentence.trim()).filter(Boolean);\n      const sentences = rawSentences.length ? rawSentences : [String(section.text || '').trim()].filter(Boolean);\n      let buffer = [];\n      let chunkCounter = 0;\n\n      const flush = () => {\n        const text = buffer.join(' ').trim();\n        if (!text) return;\n        chunkCounter += 1;\n        chunks.push({\n          chunkId: `${doc.docId}-${section.slug || ('sec' + (sectionIndex + 1))}-c${chunkCounter}`,\n          docId: doc.docId,\n          title: doc.title,\n          category: doc.category || 'prospecto',\n          version: doc.version || 'v1',\n          section: section.title || `Seccion ${sectionIndex + 1}`,\n          sectionSlug: section.slug || `sec-${sectionIndex + 1}`,\n          text,\n          tags: doc.tags || [],\n          sourceLabel: `${doc.title} / ${section.title || ('Seccion ' + (sectionIndex + 1))}`\n        });\n        buffer = [];\n      };\n\n      for (const sentence of sentences) {\n        const current = buffer.join(' ');\n        if (current && (current.length + sentence.length + 1) > 320) flush();\n        buffer.push(sentence);\n      }\n      flush();\n    }\n  }\n  return chunks;\n}\n\nconst current = $input.first().json;\nconst chunks = chunkDocuments(current.documents || []);\nconst embeddedChunks = chunks.map((chunk) => {\n  const textForEmbedding = [chunk.title, chunk.section, ...(chunk.tags || []), chunk.text].join(' ');\n  return { ...chunk, textForEmbedding, vector: buildVector(textForEmbedding) };\n});\n\nconst patientBits = Object.entries(current.patientContext || {}).map(([key, value]) => `${key}: ${value}`).join(', ');\nconst queryText = [current.question, patientBits].filter(Boolean).join(' | ');\nconst queryVector = buildVector(queryText);\nconst scored = embeddedChunks\n  .map((chunk) => {\n    const semanticScore = cosine(queryVector, chunk.vector);\n    const lexicalScore = overlapScore(queryText, chunk.textForEmbedding);\n    const score = Number(((semanticScore * 0.72) + (lexicalScore * 0.24)).toFixed(4));\n    return { ...chunk, semanticScore: Number(semanticScore.toFixed(4)), lexicalScore: Number(lexicalScore.toFixed(4)), score };\n  })\n  .filter((chunk) => chunk.score > 0.05)\n  .sort((a, b) => b.score - a.score);\n\nconst retrievedChunks = scored.slice(0, current.topK || 6);\nconst topScore = retrievedChunks[0] ? retrievedChunks[0].score : 0;\n\nreturn [{\n  json: {\n    ...current,\n    chunks,\n    embeddedChunks,\n    queryText,\n    retrievedChunks,\n    retrieval: {\n      topK: current.topK || 6,\n      returned: retrievedChunks.length,\n      topScore: Number(topScore.toFixed(4)),\n      minScoreThreshold: 0.18,\n      scopeUsed: 'current-document',\n      availableChunks: embeddedChunks.length\n    },\n    evidenceSufficient: retrievedChunks.length > 0 && topScore >= 0.18\n  }\n}];"
+      },
+      "id": "code-rag-11",
+      "name": "✂️ Chunking + Retrieval",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "if-evidence-11",
+              "leftValue": "={{ $json.evidenceSufficient }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-evidence-11",
+      "name": "❓ ¿Evidencia suficiente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2380,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://openrouter.ai/api/v1/chat/completions",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer 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"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "HTTP-Referer",
+              "value": "http://localhost:5680"
+            },
+            {
+              "name": "X-Title",
+              "value": "Clase 4 - E2E RAG"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: 'google/gemini-2.0-flash-lite-001', temperature: 0.1, max_tokens: 700, messages: [ { role: 'system', content: 'Sos un asistente de busqueda documental clinica. No diagnostiques ni indiques tratamiento. Usa exclusivamente la evidencia recuperada y devolve SOLO JSON valido con este formato: {\"answer\":\"...\",\"sources\":[{\"chunkId\":\"...\"}],\"confidence\":\"alta|media|baja\",\"requiresHumanReview\":true}.' }, { role: 'user', content: 'PREGUNTA:\\n' + $json.question + '\\n\\nCONTEXTO DEL DOCUMENTO:\\n' + $json.retrievedChunks.map((chunk, idx) => '[' + (idx + 1) + '] ' + chunk.chunkId + ' | ' + chunk.title + ' | ' + chunk.section + '\\n' + chunk.text).join('\\n\\n') + '\\n\\nDevuelve solo JSON con trazabilidad. Inclui advertencia de consulta profesional si la evidencia es parcial.' } ] }) }}",
+        "options": {
+          "timeout": 25000
+        }
+      },
+      "id": "http-llm-11",
+      "name": "🤖 OpenRouter",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2600,
+        220
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "keepOnlySet": false,
+        "values": {
+          "string": [
+            {
+              "name": "question",
+              "value": "={{ $('✅ Validar input').first().json.question }}"
+            },
+            {
+              "name": "llmRaw",
+              "value": "={{ $json.choices?.[0]?.message?.content || '' }}"
+            },
+            {
+              "name": "retrievedChunksJson",
+              "value": "={{ JSON.stringify($('✂️ Chunking + Retrieval').first().json.retrievedChunks || []) }}"
+            },
+            {
+              "name": "retrievalJson",
+              "value": "={{ JSON.stringify($('✂️ Chunking + Retrieval').first().json.retrieval || {}) }}"
+            },
+            {
+              "name": "patientContextJson",
+              "value": "={{ JSON.stringify($('✂️ Chunking + Retrieval').first().json.patientContext || {}) }}"
+            },
+            {
+              "name": "parseMetaJson",
+              "value": "={{ JSON.stringify($('✂️ Chunking + Retrieval').first().json.parseMeta || {}) }}"
+            }
+          ],
+          "number": [
+            {
+              "name": "startedAtMs",
+              "value": "={{ $('✂️ Chunking + Retrieval').first().json.startedAtMs }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "set-merge-11",
+      "name": "🧩 Unir respuesta y contexto",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.2,
+      "position": [
+        2820,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "function extractJson(t) {\n  if (!t) return null;\n  if (typeof t === 'object') return t;\n  try { return JSON.parse(t); } catch (e) {}\n  const cleaned = String(t).replace(/^```json/i, '').replace(/```$/i, '').trim();\n  try { return JSON.parse(cleaned); } catch (e) {}\n  const match = cleaned.match(/\\{[\\s\\S]*\\}/);\n  if (match) {\n    try { return JSON.parse(match[0]); } catch (e) {}\n  }\n  return null;\n}\n\nconst current = $input.first().json;\nconst previous = $('✂️ Chunking + Retrieval').first().json;\nconst retrievedChunks = previous.retrievedChunks || [];\nconst retrieval = previous.retrieval || {};\nconst patientContext = previous.patientContext || {};\nconst parseMeta = previous.parseMeta || {};\nconst draft = extractJson(current.llmRaw) || {};\nconst sourceMap = new Map(retrievedChunks.map((chunk) => [chunk.chunkId, chunk]));\nconst errors = [];\n\nif (!draft.answer || typeof draft.answer !== 'string' || !draft.answer.trim()) errors.push('missing-answer');\nif (!Array.isArray(draft.sources) || draft.sources.length === 0) errors.push('missing-sources');\n\nconst groundedSources = Array.isArray(draft.sources)\n  ? draft.sources.map((source) => sourceMap.get(source.chunkId)).filter(Boolean).map((chunk) => ({\n      chunkId: chunk.chunkId,\n      docId: chunk.docId,\n      title: chunk.title,\n      section: chunk.section,\n      score: chunk.score,\n      evidence: String(chunk.text || '').slice(0, 180)\n    }))\n  : [];\n\nif (groundedSources.length === 0) errors.push('sources-not-grounded');\n\nconst fallbackUsed = errors.length > 0;\nconst finalSources = fallbackUsed\n  ? retrievedChunks.slice(0, 3).map((chunk) => ({\n      chunkId: chunk.chunkId,\n      docId: chunk.docId,\n      title: chunk.title,\n      section: chunk.section,\n      score: chunk.score,\n      evidence: String(chunk.text || '').slice(0, 180)\n    }))\n  : groundedSources.slice(0, 3);\n\nreturn [{\n  json: {\n    success: true,\n    question: previous.question,\n    fileUrl: $('✅ Validar input').first().json.fileUrl,\n    patientContext,\n    answer: fallbackUsed ? 'No se pudo validar una sintesis trazable del modelo. Dejo los fragmentos con mejor score para revision humana. Este flujo funciona como busqueda documental, no como recomendacion medica.' : draft.answer.trim(),\n    sources: finalSources,\n    confidence: fallbackUsed ? 'baja' : (['alta', 'media', 'baja'].includes(draft.confidence) ? draft.confidence : 'media'),\n    fallbackUsed,\n    fallbackReason: fallbackUsed ? errors[0] : null,\n    requiresHumanReview: true,\n    retrieval,\n    parseMeta,\n    log: {\n      event: 'llamacloud_rag_e2e',\n      ts: new Date().toISOString(),\n      latencyMs: Math.max(Date.now() - (previous.startedAtMs || Date.now()), 0),\n      returnedChunks: retrieval ? retrieval.returned : 0,\n      topScore: retrieval ? retrieval.topScore : 0,\n      fallbackUsed,\n      fallbackReason: fallbackUsed ? errors[0] : null\n    }\n  }\n}];"
+      },
+      "id": "code-guardrails-11",
+      "name": "🛡️ Guardrails + log",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3040,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const current = $input.first().json;\nreturn [{\n  json: {\n    success: true,\n    question: current.question,\n    fileUrl: current.fileUrl,\n    patientContext: current.patientContext,\n    answer: 'No se hallo evidencia suficiente dentro del documento parseado para responder con trazabilidad. Reformula la consulta o deriva a revision humana. Este flujo no reemplaza evaluacion profesional.',\n    sources: (current.retrievedChunks || []).slice(0, 3).map((chunk) => ({\n      chunkId: chunk.chunkId,\n      docId: chunk.docId,\n      title: chunk.title,\n      section: chunk.section,\n      score: chunk.score,\n      evidence: String(chunk.text || '').slice(0, 180)\n    })),\n    confidence: 'baja',\n    fallbackUsed: true,\n    fallbackReason: 'insufficient-evidence',\n    requiresHumanReview: true,\n    retrieval: current.retrieval,\n    parseMeta: current.parseMeta,\n    log: {\n      event: 'llamacloud_rag_e2e',\n      ts: new Date().toISOString(),\n      latencyMs: Math.max(Date.now() - (current.startedAtMs || Date.now()), 0),\n      returnedChunks: current.retrieval ? current.retrieval.returned : 0,\n      topScore: current.retrieval ? current.retrieval.topScore : 0,\n      fallbackUsed: true,\n      fallbackReason: 'insufficient-evidence'\n    }\n  }\n}];"
+      },
+      "id": "code-fallback-11",
+      "name": "⚠️ Fallback seguro",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2600,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: 'Se requiere fileUrl y question', statusCode: 400 } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-error-11",
+      "name": "❌ Error input",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        840,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-11",
+      "name": "📤 Respuesta E2E",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3260,
+        320
+      ]
+    }
+  ],
+  "connections": {
+    "📥 Webhook - E2E": {
+      "main": [
+        [
+          {
+            "node": "✅ Validar input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✅ Validar input": {
+      "main": [
+        [
+          {
+            "node": "❓ ¿Input válido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ ¿Input válido?": {
+      "main": [
+        [
+          {
+            "node": "📤 Upload a LlamaCloud",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "❌ Error input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📤 Upload a LlamaCloud": {
+      "main": [
+        [
+          {
+            "node": "🎯 Extraer Job ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎯 Extraer Job ID": {
+      "main": [
+        [
+          {
+            "node": "⏳ Esperar 8s",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏳ Esperar 8s": {
+      "main": [
+        [
+          {
+            "node": "📥 Obtener resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📥 Obtener resultado": {
+      "main": [
+        [
+          {
+            "node": "🧩 Reinyectar contexto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧩 Reinyectar contexto": {
+      "main": [
+        [
+          {
+            "node": "📊 Parsear y anonimizar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Parsear y anonimizar": {
+      "main": [
+        [
+          {
+            "node": "✂️ Chunking + Retrieval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "✂️ Chunking + Retrieval": {
+      "main": [
+        [
+          {
+            "node": "❓ ¿Evidencia suficiente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ ¿Evidencia suficiente?": {
+      "main": [
+        [
+          {
+            "node": "🤖 OpenRouter",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "⚠️ Fallback seguro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🤖 OpenRouter": {
+      "main": [
+        [
+          {
+            "node": "🧩 Unir respuesta y contexto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🧩 Unir respuesta y contexto": {
+      "main": [
+        [
+          {
+            "node": "🛡️ Guardrails + log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🛡️ Guardrails + log": {
+      "main": [
+        [
+          {
+            "node": "📤 Respuesta E2E",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⚠️ Fallback seguro": {
+      "main": [
+        [
+          {
+            "node": "📤 Respuesta E2E",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "4.0.0-clase4",
+  "meta": {
+    "templateCreatedBy": "Juanca - AI Automation"
+  },
+  "id": "clase-4-llamacloud-rag-e2e",
+  "tags": [
+    {
+      "name": "healthcare"
+    },
+    {
+      "name": "rag"
+    },
+    {
+      "name": "clase-4"
+    },
+    {
+      "name": "llamacloud"
+    }
+  ]
+}
