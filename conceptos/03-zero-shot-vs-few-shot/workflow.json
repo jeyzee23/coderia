@@ -54,8 +54,8 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  model: 'google/gemini-2.0-flash-001',\n  temperature: 0.2,\n  max_tokens: 300,\n  messages: [\n    {\n      role: 'system',\n      content: 'Sos un asistente clínico. Clasificá la urgencia como P1 (crítica), P2 (alta), P3 (media) o P4 (leve). Devolvé SOLO un JSON con {urgency, reasoning}.'\n    },\n    {\n      role: 'user',\n      content: 'Paciente edad ' + ($('🩺 Webhook').first().json.body.age || '?') + ', síntomas: ' + ($('🩺 Webhook').first().json.body.symptoms || '') + ', vitales: ' + JSON.stringify($('🩺 Webhook').first().json.body.vitals || {})\n    }\n  ]\n}) }}",
-        "options": { "timeout": 10000 }
+        "jsonBody": "={{ JSON.stringify({\n  model: 'google/gemini-2.0-flash-lite-001',\n  temperature: 0.2,\n  max_tokens: 220,\n  messages: [\n    {\n      role: 'system',\n      content: 'Sos un asistente clínico. Clasificá la urgencia como P1 (crítica), P2 (alta), P3 (media) o P4 (leve). Devolvé SOLO un JSON con {urgency, reasoning}.'\n    },\n    {\n      role: 'user',\n      content: 'Paciente edad ' + ($('🩺 Webhook').first().json.body.age || '?') + ', síntomas: ' + ($('🩺 Webhook').first().json.body.symptoms || '') + ', vitales: ' + JSON.stringify($('🩺 Webhook').first().json.body.vitals || {})\n    }\n  ]\n}) }}",
+        "options": { "timeout": 20000 }
       },
       "id": "http-zero-shot",
       "name": "🅰️ LLM Zero-shot",
@@ -63,7 +63,8 @@
       "typeVersion": 4.2,
       "position": [720, 500],
       "retryOnFail": true,
-      "maxTries": 2,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "onError": "continueRegularOutput",
       "notes": "Zero-shot: solo instrucciones, cero ejemplos."
     },
@@ -93,8 +94,8 @@
         },
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={{ JSON.stringify({\n  model: 'google/gemini-2.0-flash-001',\n  temperature: 0.2,\n  max_tokens: 300,\n  messages: [\n    {\n      role: 'system',\n      content: 'Sos un asistente clínico. Clasificá la urgencia como P1, P2, P3 o P4. Devolvé SOLO un JSON con {urgency, reasoning}.\\n\\nEjemplo 1:\\nInput: 67 años, dolor toracico opresivo con disnea, SpO2 91 HR 115 TA 180/110.\\nOutput: {\"urgency\":\"P1\",\"reasoning\":\"Sospecha de síndrome coronario agudo con hipoxemia y HTA severa.\"}\\n\\nEjemplo 2:\\nInput: 32 años, dolor de garganta leve y congestion nasal, HR 72 SpO2 98.\\nOutput: {\"urgency\":\"P4\",\"reasoning\":\"Cuadro viral de baja complejidad, sin signos de alarma.\"}'\n    },\n    {\n      role: 'user',\n      content: 'Paciente edad ' + ($('🩺 Webhook').first().json.body.age || '?') + ', síntomas: ' + ($('🩺 Webhook').first().json.body.symptoms || '') + ', vitales: ' + JSON.stringify($('🩺 Webhook').first().json.body.vitals || {})\n    }\n  ]\n}) }}",
-        "options": { "timeout": 10000 }
+        "jsonBody": "={{ JSON.stringify({\n  model: 'google/gemini-2.0-flash-lite-001',\n  temperature: 0.2,\n  max_tokens: 220,\n  messages: [\n    {\n      role: 'system',\n      content: 'Sos un asistente clínico. Clasificá la urgencia como P1, P2, P3 o P4. Devolvé SOLO un JSON con {urgency, reasoning}.\\n\\nEjemplo 1:\\nInput: 67 años, dolor toracico opresivo con disnea, SpO2 91 HR 115 TA 180/110.\\nOutput: {\"urgency\":\"P1\",\"reasoning\":\"Sospecha de SCA con hipoxemia.\"}\\n\\nEjemplo 2:\\nInput: 32 años, dolor de garganta leve y congestion nasal, HR 72 SpO2 98.\\nOutput: {\"urgency\":\"P4\",\"reasoning\":\"Cuadro viral leve sin signos de alarma.\"}'\n    },\n    {\n      role: 'user',\n      content: 'Paciente edad ' + ($('🩺 Webhook').first().json.body.age || '?') + ', síntomas: ' + ($('🩺 Webhook').first().json.body.symptoms || '') + ', vitales: ' + JSON.stringify($('🩺 Webhook').first().json.body.vitals || {})\n    }\n  ]\n}) }}",
+        "options": { "timeout": 20000 }
       },
       "id": "http-few-shot",
       "name": "🅱️ LLM Few-shot",
@@ -102,7 +103,8 @@
       "typeVersion": 4.2,
       "position": [1080, 500],
       "retryOnFail": true,
-      "maxTries": 2,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
       "onError": "continueRegularOutput",
       "notes": "Few-shot: 2 ejemplos completos (P1 y P4) antes del input real."
     },
@@ -121,7 +123,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// ═══════════════════════════════════════\n// Compara outputs zero-shot vs few-shot\n// ═══════════════════════════════════════\n// Accedemos a las respuestas de AMBOS HTTP Requests\n// usando $('Nombre del nodo').first().json\n\nconst zeroShotResp = $('🅰️ LLM Zero-shot').first().json;\nconst fewShotResp = $('🅱️ LLM Few-shot').first().json;\n\nconst zeroShotRaw = zeroShotResp?.choices?.[0]?.message?.content || 'sin respuesta';\nconst fewShotRaw = fewShotResp?.choices?.[0]?.message?.content || 'sin respuesta';\n\nfunction tryParse(s) {\n  if (typeof s !== 'string') return s;\n  try { return JSON.parse(s); } catch (e) {}\n  const cleaned = s.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```\\s*$/, '').trim();\n  try { return JSON.parse(cleaned); } catch (e) {}\n  return null;\n}\n\nreturn [{\n  json: {\n    input: $('🩺 Webhook').first().json.body,\n    zeroShot: {\n      raw: zeroShotRaw,\n      parsed: tryParse(zeroShotRaw),\n      tokens: zeroShotResp?.usage?.total_tokens || 0\n    },\n    fewShot: {\n      raw: fewShotRaw,\n      parsed: tryParse(fewShotRaw),\n      tokens: fewShotResp?.usage?.total_tokens || 0\n    }\n  }\n}];"
+        "jsCode": "// ═══════════════════════════════════════\n// Compara outputs zero-shot vs few-shot\n// ═══════════════════════════════════════\n// Accedemos a las respuestas de AMBOS HTTP Requests\n// usando $('Nombre del nodo').first().json\n\nconst zeroShotResp = $('🅰️ LLM Zero-shot').first().json;\nconst fewShotResp = $('🅱️ LLM Few-shot').first().json;\n\nfunction getError(resp) {\n  return resp?.error?.message || null;\n}\n\nfunction getRaw(resp) {\n  return resp?.choices?.[0]?.message?.content || getError(resp) || 'sin respuesta';\n}\n\nconst zeroShotRaw = getRaw(zeroShotResp);\nconst fewShotRaw = getRaw(fewShotResp);\n\nfunction tryParse(s) {\n  if (typeof s !== 'string') return s;\n  try { return JSON.parse(s); } catch (e) {}\n  const cleaned = s.replace(/^```(?:json)?\\s*/i, '').replace(/\\s*```\\s*$/, '').trim();\n  try { return JSON.parse(cleaned); } catch (e) {}\n  return null;\n}\n\nreturn [{\n  json: {\n    input: $('🩺 Webhook').first().json.body,\n    zeroShot: {\n      raw: zeroShotRaw,\n      parsed: tryParse(zeroShotRaw),\n      tokens: zeroShotResp?.usage?.total_tokens || 0,\n      error: getError(zeroShotResp)\n    },\n    fewShot: {\n      raw: fewShotRaw,\n      parsed: tryParse(fewShotRaw),\n      tokens: fewShotResp?.usage?.total_tokens || 0,\n      error: getError(fewShotResp)\n    }\n  }\n}];"
       },
       "id": "code-compare",
       "name": "🔀 Comparar outputs",

@@ -50,6 +50,14 @@ n8n queda en **http://localhost:5678**.
 
 Podés importar **todos los 6 al mismo tiempo** sin problema — cada uno usa un path distinto (`/webhook/concepto-01` hasta `/webhook/concepto-06`) así que no chocan entre sí ni con los workflows madre (que usan `/webhook/patient-analysis`).
 
+### 3. Probar con Postman (opcional)
+
+Si preferís Postman en vez de `curl`, importá [`postman_collection.json`](./postman_collection.json).
+
+- Variable `baseUrl`: por default `http://localhost:5678`
+- Variable `samplePdfUrl`: PDF dummy para el concepto 05
+- El request del concepto 05 exige que la instancia apuntada por `baseUrl` tenga `LLAMA_CLOUD_API_KEY`
+
 ---
 
 ## 🧭 Qué concepto de cuál workflow madre

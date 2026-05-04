@@ -1,0 +1,345 @@
+{
+  "info": {
+    "name": "Conceptos — Mini-workflows n8n Local",
+    "description": "Coleccion Postman para los 6 mini-workflows de `conceptos/` corriendo en n8n local.\n\nUso sugerido:\n- Importa esta coleccion en Postman\n- Ajusta `baseUrl` si tu instancia no corre en `http://localhost:5678`\n- Ejecuta los requests en el mismo orden pedagogico: 01 -> 02 -> 03 -> 04 -> 05 -> 06\n\nNota sobre el concepto 05:\n- Requiere `LLAMA_CLOUD_API_KEY` en la instancia de n8n que atiende `baseUrl`\n- Si usas la stack de `clase-2/`, normalmente corresponde `http://localhost:5679`",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "_postman_id": "conceptos-mini-workflows-local"
+  },
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:5678",
+      "type": "string"
+    },
+    {
+      "key": "samplePdfUrl",
+      "value": "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+      "type": "string",
+      "description": "PDF publico de prueba para el concepto 05."
+    }
+  ],
+  "item": [
+    {
+      "name": "01 — n8n 101",
+      "description": "Webhook + Code + IF + Respond.",
+      "item": [
+        {
+          "name": "Caso critico",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('alert true', () => pm.expect(b.alert).to.eql(true));",
+                  "pm.test('hasCriticalVitals true', () => pm.expect(b.patient.hasCriticalVitals).to.eql(true));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/concepto-01",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhook",
+                "concepto-01"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-001\",\n  \"age\": 67,\n  \"vitals\": { \"spo2\": 88 }\n}"
+            }
+          }
+        },
+        {
+          "name": "Caso estable",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('alert false', () => pm.expect(b.alert).to.eql(false));",
+                  "pm.test('hasCriticalVitals false', () => pm.expect(b.patient.hasCriticalVitals).to.eql(false));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/concepto-01",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhook",
+                "concepto-01"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-002\",\n  \"age\": 32,\n  \"vitals\": { \"spo2\": 98 }\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "02 — HTTP Request externo",
+      "description": "POST a `NOTIFICATION_WEBHOOK_URL` y respuesta al cliente.",
+      "item": [
+        {
+          "name": "Enviar paciente al webhook externo",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('success true', () => pm.expect(b.success).to.eql(true));",
+                  "pm.test('externalResponse presente', () => pm.expect(b.externalResponse).to.exist);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/concepto-02",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhook",
+                "concepto-02"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"patientId\": \"P-010\",\n  \"symptoms\": \"dolor toracico\",\n  \"age\": 67\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "03 — Zero-shot vs Few-shot",
+      "description": "Compara dos prompts para el mismo input.",
+      "item": [
+        {
+          "name": "Caso borderline",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('zeroShot parsed presente', () => pm.expect(b.zeroShot.parsed).to.be.an('object'));",
+                  "pm.test('fewShot parsed presente', () => pm.expect(b.fewShot.parsed).to.be.an('object'));",
+                  "pm.test('zeroShot urgency valida', () => pm.expect(['P1','P2','P3','P4']).to.include(b.zeroShot.parsed.urgency));",
+                  "pm.test('fewShot urgency valida', () => pm.expect(['P1','P2','P3','P4']).to.include(b.fewShot.parsed.urgency));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/concepto-03",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhook",
+                "concepto-03"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"age\": 55,\n  \"symptoms\": \"dolor de cabeza moderado con nauseas\",\n  \"vitals\": { \"hr\": 95 }\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "04 — Validar output del LLM",
+      "description": "Valida que el JSON del modelo cumpla el schema esperado.",
+      "item": [
+        {
+          "name": "Caso normal",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('success true', () => pm.expect(b.success).to.eql(true));",
+                  "pm.test('urgency valida', () => pm.expect(['P1','P2','P3','P4']).to.include(b.triage.urgency));",
+                  "pm.test('reasoning no vacio', () => pm.expect(b.triage.reasoning).to.be.a('string').and.not.empty);"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/concepto-04",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhook",
+                "concepto-04"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"age\": 67,\n  \"symptoms\": \"dolor toracico intenso con disnea\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "05 — LlamaCloud PDF",
+      "description": "Sube un PDF por URL, espera el parseo y descarga el markdown. Requiere `LLAMA_CLOUD_API_KEY` en la instancia apuntada por `baseUrl`.",
+      "item": [
+        {
+          "name": "PDF dummy",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('success true', () => pm.expect(b.success).to.eql(true));",
+                  "pm.test('markdown string', () => pm.expect(b.markdown).to.be.a('string'));",
+                  "pm.test('charCount > 0', () => pm.expect(b.charCount).to.be.above(0));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/concepto-05",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhook",
+                "concepto-05"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"pdfUrl\": \"{{samplePdfUrl}}\"\n}"
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "06 — Observabilidad + Fallback",
+      "description": "Prueba el patron de fallback y log estructurado.",
+      "item": [
+        {
+          "name": "Caso con fallback probable",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status 200', () => pm.response.to.have.status(200));",
+                  "const b = pm.response.json();",
+                  "pm.test('priority presente', () => pm.expect(b.triage.priority).to.match(/^P[1-4]/));",
+                  "pm.test('log event correcto', () => pm.expect(b.log.event).to.eql('triage_completed'));",
+                  "pm.test('fallbackUsed boolean', () => pm.expect(b.log.fallbackUsed).to.be.a('boolean'));",
+                  "pm.test('latencyMs number', () => pm.expect(b.log.latencyMs).to.be.a('number'));"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/webhook/concepto-06",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "webhook",
+                "concepto-06"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"age\": 67,\n  \"symptoms\": \"dolor toracico intenso\",\n  \"vitals\": { \"spo2\": 91, \"hr\": 115 }\n}"
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

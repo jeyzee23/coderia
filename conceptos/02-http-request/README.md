@@ -9,14 +9,14 @@ Cómo hacer que n8n **llame a una API externa**. Es el nodo más usado en workfl
 ```
 Webhook (POST /concepto-02)
     ↓
-HTTP Request (POST a $env.NOTIFICATION_WEBHOOK_URL)
+HTTP Request (POST a un webhook externo fijo)
     ↓
 Respond OK
 ```
 
 ## 🧪 Cómo probarlo
 
-Antes de arrancar, asegurate de que tu `.env` de `clase-1/` tenga una URL real en `NOTIFICATION_WEBHOOK_URL` (conseguila gratis en [webhook.site](https://webhook.site)).
+Este concepto quedó preparado con una URL fija de [webhook.site](https://webhook.site) dentro del nodo HTTP Request, así que no depende de `$env` ni de features pagas de la UI.
 
 ```bash
 curl -X POST http://localhost:5678/webhook/concepto-02 \
@@ -24,12 +24,12 @@ curl -X POST http://localhost:5678/webhook/concepto-02 \
   -d '{"patientId":"P-001","symptoms":"dolor toracico","age":67}'
 ```
 
-Después abrí tu URL de webhook.site en el navegador — vas a ver el POST llegando.
+Después abrí la URL configurada en el nodo HTTP Request — vas a ver el POST llegando.
 
 ## 👀 Qué mirar
 
 - En el nodo **HTTP Request**: cómo se configuran `method`, `url`, `headers` y `body`.
-- La expresión `{{ $env.NOTIFICATION_WEBHOOK_URL }}` — lee una variable de entorno del container.
+- La URL está hardcodeada en el nodo HTTP Request para que el ejemplo funcione aunque la UI no te deje usar env vars.
 - Cómo el `jsonBody` combina datos fijos (`event`, `ts`) con datos dinámicos del webhook (`$json.body`).
 - La opción **Retry on Fail** del nodo: si el webhook externo está caído, reintenta 2 veces.
 
@@ -53,6 +53,6 @@ Y en webhook.site:
 
 ## 💡 Preguntas guía
 
-1. **¿Qué pasa si cambiás `$env.NOTIFICATION_WEBHOOK_URL` por una URL inválida** (ej: `https://nope.invalid`)? ¿Cuántas veces reintenta antes de fallar? (pista: mirá "Retry on Fail").
+1. **¿Qué pasa si cambiás la URL del nodo** por una URL inválida (ej: `https://nope.invalid`)? ¿Cuántas veces reintenta antes de fallar? (pista: mirá "Retry on Fail").
 2. **Agregá otro header custom** al HTTP Request (ej: `X-Patient-Priority` con el valor del patientId). ¿Dónde aparece en webhook.site?
 3. **Cambiá el method de POST a GET.** ¿Qué pasa con el body? (pista: GET no lleva body, n8n lo convierte en query params).

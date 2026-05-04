@@ -1,0 +1,493 @@
+{
+  "name": "LlamaCloud Parser - Clase 4",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Clase 4 - Integración LlamaCloud + n8n\n\nWorkflow completo para parsing documental:\n1. Webhook recibe documentos\n2. LlamaCloud parsea PDF/DOCX/PPTX\n3. Extracción de texto y metadatos\n4. Anonimización de datos sensibles\n5. Almacenamiento en DB\n\nWebhook: POST /webhook/llamacloud-parse",
+        "height": 280,
+        "width": 380,
+        "color": 7
+      },
+      "id": "note-llamacloud-main",
+      "name": "📘 Documentación",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -320,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Configuración LlamaCloud\n\nRequiere API key en credenciales n8n.\nVariables de entorno:\n- LLAMA_CLOUD_API_KEY\n\nInput:\n```json\n{\n  \"fileUrl\": \"https://...\",\n  \"outputSchema\": {\n    \"paciente\": \"string\",\n    \"fecha\": \"date\",\n    \"diagnostico\": \"string\",\n    \"tablas\": \"array\"\n  }\n}\n```",
+        "height": 260,
+        "width": 340,
+        "color": 6
+      },
+      "id": "note-setup-c4",
+      "name": "⚙️ Setup",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        120,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Anonimización\n\nRegex para enmascarar:\n- Nombres propios (mayúsculas al inicio)\n- DNI/CUIT (formato 00-00000000)\n- Fechas de nacimiento\n- Teléfonos y emails\n\nNo usa código JS externo.",
+        "height": 220,
+        "width": 320,
+        "color": 2
+      },
+      "id": "note-anon-c4",
+      "name": "🔒 Anonimización",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1640,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Almacenamiento\n\nOpciones de storage:\n- Google Sheets (estructurado)\n- Airtable (con validación)\n- Supabase/PostgreSQL\n- Google Drive (archivos)\n\nEl flujo guarda resultado + metadatos.",
+        "height": 220,
+        "width": 340,
+        "color": 4
+      },
+      "id": "note-storage-c4",
+      "name": "💾 Storage",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2380,
+        -220
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "llamacloud-parse",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-c4",
+      "name": "🔗 Webhook - Reception",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        220,
+        380
+      ],
+      "webhookId": "llamacloud-parse"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": false,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "if-file-valid",
+              "leftValue": "={{ $json.fileUrl }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notExists"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-file-valid",
+      "name": "❓ ¿Input válido?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        440,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: \"Se requiere fileUrl\", statusCode: 400 } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-error-c4",
+      "name": "❌ Error Missing fileUrl",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        660,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cloud.llamaindex.ai/api/parsing/upload",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.LLAMA_CLOUD_API_KEY }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ input_url: $json.fileUrl, output_schema: $json.outputSchema || { \"text\": \"string\", \"metadata\": \"object\" }, tier: \"premium\" }) }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "http-upload-c4",
+      "name": "📤 Upload a LlamaCloud",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        880,
+        280
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Extraer job_id del response de upload\nconst data = $input.first().json;\nconst jobId = data?.job?.id || data?.id;\n\nif (!jobId) {\n  return [{\n    json: {\n      error: \"No se pudo obtener job_id de LlamaCloud\",\n      validJob: false\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    jobId: jobId,\n    validJob: true\n  }\n}];",
+        "options": {}
+      },
+      "id": "code-extract-jobid",
+      "name": "🎯 Extraer Job ID",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "maxTries": 8,
+        "waitBetweenTries": 4000,
+        "options": {}
+      },
+      "id": "wait-c4",
+      "name": "⏳ Esperar procesamiento",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1320,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.cloud.llamaindex.ai/api/parsing/job/{{ $json.jobId }}/result",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{ $env.LLAMA_CLOUD_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "http-result-c4",
+      "name": "📥 Obtener resultado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1540,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parser de respuesta LlamaCloud\n// Devuelve estructuras separadas: texto, markdown, tablas, metadata\n\nconst data = $input.first().json;\nconst txt = data?.text || data?.txt || '';\nconst md = data?.markdown || data?.md || '';\nconst json = data?.json || [];\n\n// Extraer tablas del markdown (formato | col1 | col2 |)\nfunction extractTables(markdown) {\n  const tableRegex = /\\|[^\\n]+\\|/g;\n  const matches = markdown.match(tableRegex) || [];\n  const tables = [];\n  let currentTable = [];\n  \n  for (const line of matches) {\n    const cells = line.split('|').filter(c => c.trim());\n    if (cells.some(c => c.includes('---'))) {\n      if (currentTable.length > 0) {\n        tables.push(currentTable);\n        currentTable = [];\n      }\n    } else {\n      currentTable.push(cells.map(c => c.trim()));\n    }\n  }\n  if (currentTable.length > 0) {\n    tables.push(currentTable);\n  }\n  return tables;\n}\n\nconst tables = extractTables(md);\n\nreturn [{\n  json: {\n    originalText: txt,\n    markdown: md,\n    tables: tables,\n    tableCount: tables.length,\n    pageCount: json.length || 1,\n    metadata: {\n      parsedAt: new Date().toISOString(),\n      jobId: data.jobId || null,\n      sourceFormat: data.fileUrl?.split('.').pop() || 'unknown'\n    }\n  }\n}];",
+        "options": {}
+      },
+      "id": "code-parse-result",
+      "name": "📊 Parsear resultado",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1760,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Anonimización de datos sensibles en texto\n// Usa REGEX para detectar y enmascarar patrones sensibles\n\nconst data = $input.first().json;\nlet originalText = data.originalText || '';\nlet markdown = data.markdown || '';\n\n// Patrones de PII a anonimizar\nconst patterns = [\n  // DNI argentino (formato 00.000.000 o 00000000)\n  { pattern: /\\b\\d{1,2}\\.\\d{3}\\.\\d{3}\\b/g, replacement: '[DNI]' },\n  { pattern: /\\b\\d{7,8}\\b/g, replacement: '[DNI]' },\n  // CUIT/CUIL\n  { pattern: /\\b\\d{2}-\\d{7,8}-\\d\\b/g, replacement: '[CUIT]' },\n  // Fechas de nacimiento (detectadas en contexto de \"nac\", \"fecha nac\", \"nacimiento\")\n  { pattern: /\\b(\\d{1,2}[\\/\\-]\\d{1,2}[\\/\\-]\\d{2,4})\\b/gi, replacement: '[FECHA]' },\n  // Teléfonos\n  { pattern: /\\b\\d{3,4}[\\s\\-]?\\d{3,4}[\\s\\-]?\\d{3,4}\\b/g, replacement: '[TELEFONO]' },\n  { pattern: /\\b\\+54\\d{9,}/g, replacement: '[TELEFONO]' },\n  // Emails\n  { pattern: /\\b[\\w.-]+@[\\w.-]+\\.\\w+\\b/gi, replacement: '[EMAIL]' },\n  // Nombres propios (heurística: palabras que siguen a \"Sr.\", \"Sra.\", \"Paciente\", \"Nombre\")\n  { pattern: /\\b(Sr\\.?|Sra\\.?|Dr\\.?|Dra\\.?)\\s+[A-Z][a-z]+ [A-Z][a-z]+\\b/g, replacement: '[NOMBRE]' },\n  // Nombres en contexto de paciente\n  { pattern: /\\bPaciente[:\\s]+[A-Z][a-z]+ [A-Z][a-z]+\\b/gi, replacement: 'Paciente: [NOMBRE]' }\n];\n\n// Aplicar anonymization al texto\nfor (const { pattern, replacement } of patterns) {\n  originalText = originalText.replace(pattern, replacement);\n  markdown = markdown.replace(pattern, replacement);\n}\n\nreturn [{\n  json: {\n    ...data,\n    anonymizedText: originalText,\n    anonymizedMarkdown: markdown,\n    anonymization: {\n      applied: true,\n      patternsUsed: patterns.length,\n      maskedAt: new Date().toISOString()\n    }\n  }\n}];",
+        "options": {}
+      },
+      "id": "code-anonymize",
+      "name": "🔒 Anonimizar PII",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "if-storage-gs",
+              "leftValue": "={{ $json.storageType }}",
+              "rightValue": "google-sheets",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-storage-c4",
+      "name": "❓ ¿Google Sheets?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2200,
+        280
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "sheetId": {
+          "value": "={{ $json.spreadsheetId || 'DEFAULT_SPREADSHEET_ID' }}"
+        },
+        "range": "={{ $json.sheetName || 'Sheet1' }}!A1",
+        "options": {
+          "lowestRow": 1,
+          "raw": false
+        }
+      },
+      "id": "gs-append-c4",
+      "name": "📗 Google Sheets Append",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 3.2,
+      "position": [
+        2420,
+        180
+      ]
+    },
+    {
+      "parameters": {
+        "mode": "append",
+        "table": "={{ $json.table || 'parsed_documents' }}",
+        "options": {
+          "raw": false
+        }
+      },
+      "id": "airtable-append-c4",
+      "name": "📘 Airtable Append",
+      "type": "n8n-nodes-base.airtable",
+      "typeVersion": 1.2,
+      "position": [
+        2420,
+        380
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\n  success: true,\n  jobId: $json.jobId,\n  pageCount: $json.pageCount,\n  tableCount: $json.tableCount,\n  textLength: $json.anonymizedText?.length || 0,\n  anonymized: $json.anonymization?.applied || false\n} }}",
+        "options": {}
+      },
+      "id": "respond-c4",
+      "name": "📤 Respuesta",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2640,
+        280
+      ]
+    }
+  ],
+  "connections": {
+    "🔗 Webhook - Reception": {
+      "main": [
+        [
+          {
+            "node": "❓ ¿Input válido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ ¿Input válido?": {
+      "main": [
+        [
+          {
+            "node": "📤 Upload a LlamaCloud",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "❌ Error Missing fileUrl",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📤 Upload a LlamaCloud": {
+      "main": [
+        [
+          {
+            "node": "🎯 Extraer Job ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🎯 Extraer Job ID": {
+      "main": [
+        [
+          {
+            "node": "⏳ Esperar procesamiento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "⏳ Esperar procesamiento": {
+      "main": [
+        [
+          {
+            "node": "📥 Obtener resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📥 Obtener resultado": {
+      "main": [
+        [
+          {
+            "node": "📊 Parsear resultado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📊 Parsear resultado": {
+      "main": [
+        [
+          {
+            "node": "🔒 Anonimizar PII",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "🔒 Anonimizar PII": {
+      "main": [
+        [
+          {
+            "node": "❓ ¿Google Sheets?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "❓ ¿Google Sheets?": {
+      "main": [
+        [
+          {
+            "node": "📗 Google Sheets Append",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "📘 Airtable Append",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📗 Google Sheets Append": {
+      "main": [
+        [
+          {
+            "node": "📤 Respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "📘 Airtable Append": {
+      "main": [
+        [
+          {
+            "node": "📤 Respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "versionId": "4.0.0",
+  "meta": {
+    "templateCreatedBy": "Juanca - AI Automation"
+  },
+  "id": "llamacloud-parse-clase-4",
+  "tags": [
+    {
+      "name": "llamacloud"
+    },
+    {
+      "name": "parsing"
+    },
+    {
+      "name": "clase-4"
+    }
+  ]
+}

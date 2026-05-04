@@ -1,0 +1,739 @@
+{
+  "name": "Clase 5 - Multimodalidad Biomédica (servicios integrados)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Clase 5\n\nWorkflow alineado con la actividad:\n\n- Webhook\n- Analisis de imagen simulado por API publica\n- STT con AssemblyAI si llega `audioUrl`\n- Reutilizacion de `audioTranscript` para demo sincronica\n- Chunking\n- Embeddings reales con Cohere\n- Retrieval sobre base clinica simulada\n- Fallback con retries y notificacion\n- Evaluacion automatica\n\nVariables esperadas:\n- `ASSEMBLYAI_API_KEY`\n- `COHERE_API_KEY`\n- `NOTIFICATION_WEBHOOK_URL`\n- `ELEVENLABS_API_KEY` opcional",
+        "height": 360,
+        "width": 420,
+        "color": 7
+      },
+      "id": "note-intro",
+      "name": "Documentacion",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -300,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "biomedical-multimodal-audio",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        120,
+        480
+      ],
+      "webhookId": "biomedical-multimodal-audio"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json.body || $input.first().json || {};\n\nconst hasImage = !!(body.imageFindingsText || body.imageUrl || body.imageBase64);\nconst hasAudio = !!(body.audioTranscript || body.audioMockText || body.audioUrl);\n\nif (!body.patientId || !hasImage || !hasAudio) {\n  return [{ json: { valid: false, statusCode: 400, error: 'Se requiere patientId, una imagen o descripcion visual, y un audioUrl o audioTranscript.' } }];\n}\n\nconst hashId = (id) => {\n  let h = 0;\n  const value = String(id);\n  for (let i = 0; i < value.length; i++) {\n    h = ((h << 5) - h) + value.charCodeAt(i);\n    h |= 0;\n  }\n  return 'hash_' + Math.abs(h).toString(36);\n};\n\nreturn [{\n  json: {\n    valid: true,\n    patientHash: hashId(body.patientId),\n    imageStudyType: body.imageStudyType || 'estudio_no_especificado',\n    imageFindingsText: String(body.imageFindingsText || '').trim(),\n    imageUrl: body.imageUrl || null,\n    audioTranscript: String(body.audioTranscript || '').trim(),\n    audioMockText: String(body.audioMockText || '').trim(),\n    audioUrl: body.audioUrl || null,\n    audioLanguage: body.audioLanguage || 'es',\n    topK: Number(body.topK || 3),\n    startedAtMs: Date.now()\n  }\n}];"
+      },
+      "id": "normalize",
+      "name": "Validar y normalizar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        360,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "valid-check",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Input valido?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        600,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: $json.error, statusCode: 400 } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-error",
+      "name": "Responder error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        860,
+        700
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Imagen\n\nSe mantiene simulada porque la consigna acepta API publica o simulada.\n\nTransporte: `postman-echo`\nParseo: reglas sobre `imageFindingsText`\nRetry visible para politica de fallback.",
+        "height": 240,
+        "width": 320,
+        "color": 4
+      },
+      "id": "note-image",
+      "name": "Nota imagen",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        820,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://postman-echo.com/post",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ studyType: $json.imageStudyType, findings: $json.imageFindingsText, imageUrl: $json.imageUrl }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "http-image",
+      "name": "HTTP imagen simulada",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        860,
+        480
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Validar y normalizar').first().json;\nconst echo = $input.first().json || {};\nconst payload = echo.json || {};\nconst text = String(payload.findings || prev.imageFindingsText || '').toLowerCase();\n\nconst labels = [];\nlet suspectedFinding = 'sin hallazgo concluyente';\nif (text.includes('infiltrado')) {\n  labels.push('infiltrado_pulmonar');\n  suspectedFinding = 'posible proceso infeccioso';\n}\nif (text.includes('opacidad')) labels.push('opacidad');\nif (text.includes('derrame')) labels.push('derrame_pleural');\nif (text.includes('nodulo')) labels.push('nodulo');\nif (text.includes('fractura')) suspectedFinding = 'hallazgo oseo traumatico';\n\nconst apiOk = Object.keys(echo).length > 0;\nreturn [{\n  json: {\n    ...prev,\n    imageApi: {\n      requestOk: apiOk,\n      provider: 'postman-echo-mock',\n      retriesPlanned: 3\n    },\n    imageAnalysis: {\n      studyType: prev.imageStudyType,\n      labels,\n      suspectedFinding,\n      confidence: apiOk ? (labels.length ? 0.84 : 0.55) : 0.2,\n      source: apiOk ? 'simulated-image-service' : 'image-fallback'\n    }\n  }\n}];"
+      },
+      "id": "parse-image",
+      "name": "Parse imagen",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1100,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "has-transcript",
+              "leftValue": "={{ $json.audioTranscript || $json.audioMockText ? 'yes' : '' }}",
+              "rightValue": "yes",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-transcript",
+      "name": "Ya hay transcripcion?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1340,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst transcript = String(d.audioTranscript || d.audioMockText || '').replace(/\\s+/g, ' ').trim();\nreturn [{\n  json: {\n    ...d,\n    stt: {\n      transcript,\n      source: 'provided-transcript',\n      language: d.audioLanguage,\n      confidence: transcript.length > 80 ? 0.92 : transcript.length > 25 ? 0.74 : 0.46,\n      quality: transcript.length > 80 ? 'alta' : transcript.length > 25 ? 'media' : 'baja',\n      unresolvedAudio: transcript.length === 0,\n      provider: 'manual-or-upstream'\n    }\n  }\n}];"
+      },
+      "id": "use-provided-transcript",
+      "name": "Usar transcripcion provista",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1580,
+        360
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## STT real\n\nSi no llega `audioTranscript`, se intenta usar AssemblyAI con `audioUrl`.\n\nComo la API es asincronica, este workflow hace submit + un poll rapido. Para demos sincronicas, conviene mandar `audioTranscript` ya resuelto.",
+        "height": 260,
+        "width": 340,
+        "color": 5
+      },
+      "id": "note-stt",
+      "name": "Nota STT",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1500,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.assemblyai.com/v2/transcript",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $env.ASSEMBLYAI_API_KEY }}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ audio_url: $json.audioUrl, speech_models: ['universal-3-pro'], language_detection: true, punctuate: true, format_text: true, redact_pii: true }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "assembly-submit",
+      "name": "AssemblyAI submit",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1580,
+        560
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://api.assemblyai.com/v2/transcript/{{ $json.id || 'missing' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "={{ $env.ASSEMBLYAI_API_KEY }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "assembly-poll",
+      "name": "AssemblyAI poll",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1820,
+        560
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const prev = $('Parse imagen').first().json;\nconst data = $input.first().json || {};\nconst transcript = String(data.text || '').replace(/\\s+/g, ' ').trim();\nconst completed = data.status === 'completed' && transcript.length > 0;\nreturn [{\n  json: {\n    ...prev,\n    stt: {\n      transcript,\n      source: completed ? 'assemblyai' : 'stt-fallback',\n      language: prev.audioLanguage,\n      confidence: completed ? 0.88 : 0.2,\n      quality: completed ? 'alta' : 'baja',\n      unresolvedAudio: !completed,\n      provider: 'AssemblyAI',\n      transcriptId: data.id || null,\n      status: data.status || 'unavailable'\n    }\n  }\n}];"
+      },
+      "id": "parse-assembly",
+      "name": "Parse AssemblyAI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2060,
+        560
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst transcript = String(d.stt.transcript || '').trim();\nconst sentences = transcript.split(/(?<=[.!?])\\s+/).map((s) => s.trim()).filter(Boolean);\nconst chunks = [];\nlet current = '';\nlet idx = 1;\nfor (const sentence of sentences) {\n  if ((current + ' ' + sentence).trim().length <= 220) {\n    current = (current + ' ' + sentence).trim();\n  } else {\n    if (current) chunks.push({ chunkId: 'chunk_' + idx++, text: current, charCount: current.length });\n    current = sentence;\n  }\n}\nif (current) chunks.push({ chunkId: 'chunk_' + idx++, text: current, charCount: current.length });\nif (chunks.length === 0 && transcript) chunks.push({ chunkId: 'chunk_1', text: transcript, charCount: transcript.length });\n\nconst knowledgeBase = [\n  { docId: 'doc_1', title: 'Guia de neumonia adquirida en la comunidad', text: 'Infiltrado en radiografia de torax, fiebre, tos y disnea requieren correlacion clinica, seguimiento cercano y evaluacion de saturacion.' },\n  { docId: 'doc_2', title: 'Checklist de informe radiologico toracico', text: 'Opacidades, derrame pleural y nodulos deben documentarse con lateralidad, extension y necesidad de control por imagen.' },\n  { docId: 'doc_3', title: 'Protocolo de seguimiento ambulatorio respiratorio', text: 'Pacientes con disnea progresiva, fiebre o saturacion menor a 94 requieren control en menos de 24 horas y eventual derivacion.' },\n  { docId: 'doc_4', title: 'Guia de comunicacion clinica segura', text: 'Los resumenes automaticos deben marcar incertidumbre, pedir revision humana y evitar recomendaciones diagnosticas definitivas.' }\n];\n\nconst queryText = [d.stt.transcript, d.imageFindingsText, d.imageAnalysis.labels.join(' '), d.imageAnalysis.suspectedFinding].join(' ');\nconst embedTexts = [queryText, ...knowledgeBase.map((doc) => doc.text)];\n\nreturn [{\n  json: {\n    ...d,\n    chunking: {\n      strategy: 'sentence-window-no-overlap',\n      chunkCount: chunks.length,\n      maxChunkChars: 220\n    },\n    chunks,\n    knowledgeBase,\n    embeddingTexts: embedTexts\n  }\n}];"
+      },
+      "id": "chunking",
+      "name": "Chunking y base clinica",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2300,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Embeddings reales\n\nCohere genera embeddings reales para query + documentos. Si falla o no hay API key, la rama siguiente degrada a embeddings locales hashed.",
+        "height": 220,
+        "width": 320,
+        "color": 6
+      },
+      "id": "note-embed",
+      "name": "Nota embeddings",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2480,
+        20
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.cohere.com/v2/embed",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "=Bearer {{$env.COHERE_API_KEY}}"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ texts: $json.embeddingTexts, model: 'embed-english-light-v3.0', input_type: 'search_document', embedding_types: ['float'] }) }}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "cohere-embed",
+      "name": "Cohere embeddings",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2540,
+        480
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1500,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Chunking y base clinica').first().json;\nconst embedResponse = $input.first().json || {};\n\nconst normalize = (text) => String(text || '').toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').replace(/[^a-z0-9\\s]/g, ' ').replace(/\\s+/g, ' ').trim();\nconst dims = 64;\nconst fallbackEmbed = (text) => {\n  const vec = new Array(dims).fill(0);\n  for (const token of normalize(text).split(' ')) {\n    if (!token) continue;\n    let hash = 0;\n    for (let i = 0; i < token.length; i++) hash = ((hash << 5) - hash) + token.charCodeAt(i);\n    vec[Math.abs(hash) % dims] += 1;\n  }\n  const norm = Math.sqrt(vec.reduce((acc, n) => acc + (n * n), 0)) || 1;\n  return vec.map((n) => n / norm);\n};\nconst cosine = (a, b) => a.reduce((acc, n, i) => acc + (n * b[i]), 0);\n\nlet embeddings = embedResponse?.embeddings?.float || null;\nlet embeddingSource = 'cohere';\nif (!Array.isArray(embeddings) || embeddings.length !== d.embeddingTexts.length) {\n  embeddings = d.embeddingTexts.map((text) => fallbackEmbed(text));\n  embeddingSource = 'local-fallback';\n}\n\nconst queryVector = embeddings[0];\nconst docVectors = embeddings.slice(1);\nconst documents = d.knowledgeBase.map((doc, index) => ({\n  docId: doc.docId,\n  title: doc.title,\n  excerpt: doc.text,\n  score: Number(cosine(queryVector, docVectors[index]).toFixed(4))\n})).sort((a, b) => b.score - a.score).slice(0, d.topK || 3);\n\nconst summary = {\n  brief: [\n    d.stt.transcript ? ('Voz: ' + d.stt.transcript) : 'Sin transcripcion confiable.',\n    d.imageAnalysis.labels.length ? ('Imagen: ' + d.imageAnalysis.labels.join(', ')) : 'Imagen sin etiquetas fuertes.',\n    documents[0] ? ('Documento mas cercano: ' + documents[0].title) : 'Sin soporte documental.'\n  ].join(' '),\n  assessment: d.imageAnalysis.suspectedFinding,\n  followUp: documents[0] && documents[0].score >= 0.55 ? 'Se recomienda correlacion clinica y revision profesional dentro del circuito habitual.' : 'La evidencia recuperada es debil y requiere revision humana.',\n  requiresHumanReview: !documents[0] || documents[0].score < 0.7 || d.stt.confidence < 0.7 || d.imageAnalysis.confidence < 0.6\n};\n\nreturn [{\n  json: {\n    ...d,\n    retrieval: {\n      strategy: embeddingSource === 'cohere' ? 'cohere-embeddings-cosine' : 'hashed-bow-cosine',\n      embeddingSource,\n      topK: documents.length,\n      documents,\n      topScore: documents[0] ? documents[0].score : 0\n    },\n    summary\n  }\n}];"
+      },
+      "id": "retrieval",
+      "name": "Retrieval semantico",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2780,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst transcriptQuality = d.stt.unresolvedAudio ? 0.1 : Number(d.stt.confidence.toFixed(2));\nconst imageConfidence = Number(d.imageAnalysis.confidence.toFixed(2));\nconst groundingScore = Number((Math.max(0, d.retrieval.topScore) * 1.2).toFixed(2));\nconst overallScore = Number(((transcriptQuality * 0.35) + (imageConfidence * 0.25) + (groundingScore * 0.4)).toFixed(2));\nconst reasons = [];\nif (!d.imageApi.requestOk) reasons.push('image_api_failed');\nif (d.stt.unresolvedAudio) reasons.push('stt_unresolved');\nif (d.retrieval.topScore < 0.45) reasons.push('weak_grounding');\nif (overallScore < 0.6) reasons.push('overall_below_threshold');\n\nreturn [{\n  json: {\n    ...d,\n    evaluation: {\n      transcriptQuality,\n      imageConfidence,\n      groundingScore,\n      overallScore,\n      passed: reasons.length === 0,\n      reasons\n    }\n  }\n}];"
+      },
+      "id": "evaluation",
+      "name": "Evaluacion automatica",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3020,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "passed",
+              "leftValue": "={{ $json.evaluation.passed }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-quality",
+      "name": "Calidad suficiente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        3260,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NOTIFICATION_WEBHOOK_URL || 'https://postman-echo.com/post' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ event: 'fallback_triggered', patientHash: $json.patientHash, reasons: $json.evaluation.reasons, studyType: $json.imageStudyType, timestamp: new Date().toISOString() }) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "notify-fallback",
+      "name": "Notificar fallback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        3500,
+        620
+      ],
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 1000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $('Evaluacion automatica').first().json;\nreturn [{\n  json: {\n    ...d,\n    fallbackUsed: true,\n    summary: {\n      brief: 'No se pudo validar con suficiente confianza la combinacion de voz e imagen. Se requiere revision humana antes de reutilizar este contenido.',\n      assessment: 'fallback_seguro',\n      followUp: 'Verificar imagen, reescuchar audio y confirmar contexto clinico.',\n      requiresHumanReview: true\n    },\n    tts: {\n      provider: 'ElevenLabs-opcional',\n      text: 'No se pudo validar con confianza el contenido multimodal. Se requiere revision humana.'\n    }\n  }\n}];"
+      },
+      "id": "fallback",
+      "name": "Fallback seguro",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        620
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst now = Date.now();\nconst latencyMs = d.startedAtMs ? now - d.startedAtMs : null;\nreturn [{\n  json: {\n    patientHash: d.patientHash,\n    imageAnalysis: d.imageAnalysis,\n    stt: d.stt,\n    chunking: d.chunking,\n    chunks: d.chunks,\n    retrieval: d.retrieval,\n    summary: d.summary,\n    evaluation: d.evaluation,\n    tts: d.tts || {\n      provider: 'ElevenLabs-opcional',\n      text: d.summary.followUp\n    },\n    log: {\n      event: 'biomedical_multimodal_completed',\n      ts: new Date(now).toISOString(),\n      latencyMs,\n      fallbackUsed: d.fallbackUsed === true,\n      topScore: d.retrieval.topScore,\n      overallScore: d.evaluation.overallScore,\n      requiresHumanReview: d.summary.requiresHumanReview,\n      studyType: d.imageStudyType,\n      embeddingSource: d.retrieval.embeddingSource,\n      sttProvider: d.stt.provider\n    }\n  }\n}];"
+      },
+      "id": "build-response",
+      "name": "Armar respuesta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3740,
+        460
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "respond-ok",
+      "name": "Responder OK",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3980,
+        460
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validar y normalizar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar y normalizar": {
+      "main": [
+        [
+          {
+            "node": "Input valido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input valido?": {
+      "main": [
+        [
+          {
+            "node": "HTTP imagen simulada",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP imagen simulada": {
+      "main": [
+        [
+          {
+            "node": "Parse imagen",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse imagen": {
+      "main": [
+        [
+          {
+            "node": "Ya hay transcripcion?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ya hay transcripcion?": {
+      "main": [
+        [
+          {
+            "node": "Usar transcripcion provista",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "AssemblyAI submit",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Usar transcripcion provista": {
+      "main": [
+        [
+          {
+            "node": "Chunking y base clinica",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AssemblyAI submit": {
+      "main": [
+        [
+          {
+            "node": "AssemblyAI poll",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AssemblyAI poll": {
+      "main": [
+        [
+          {
+            "node": "Parse AssemblyAI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse AssemblyAI": {
+      "main": [
+        [
+          {
+            "node": "Chunking y base clinica",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chunking y base clinica": {
+      "main": [
+        [
+          {
+            "node": "Cohere embeddings",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cohere embeddings": {
+      "main": [
+        [
+          {
+            "node": "Retrieval semantico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Retrieval semantico": {
+      "main": [
+        [
+          {
+            "node": "Evaluacion automatica",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluacion automatica": {
+      "main": [
+        [
+          {
+            "node": "Calidad suficiente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calidad suficiente?": {
+      "main": [
+        [
+          {
+            "node": "Armar respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Notificar fallback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notificar fallback": {
+      "main": [
+        [
+          {
+            "node": "Fallback seguro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fallback seguro": {
+      "main": [
+        [
+          {
+            "node": "Armar respuesta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar respuesta": {
+      "main": [
+        [
+          {
+            "node": "Responder OK",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "clase-5"
+    },
+    {
+      "name": "multimodalidad"
+    },
+    {
+      "name": "audio"
+    }
+  ]
+}

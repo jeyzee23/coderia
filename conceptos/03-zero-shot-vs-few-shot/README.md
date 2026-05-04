@@ -63,8 +63,16 @@ El output te devuelve ambas respuestas crudas y parseadas:
 |---|-----------|----------|
 | Formato | A veces con markdown fences ` ```json ` | Suele venir JSON limpio |
 | Consistencia | Puede mezclar P1-P4 con "crítica"/"alta" | Respeta la escala de los ejemplos |
-| Tokens usados | Menos (~80) | Más (~250, por los ejemplos) |
+| Tokens usados | Menos (~80) | Más (~180-220, por los ejemplos) |
 | Razonamiento | A veces genérico | Más alineado al estilo de los ejemplos |
+
+### Si ves 429 o 504 del proveedor
+
+Es un problema transitorio de OpenRouter/proveedor, no de tu lógica clínica.
+
+- Este workflow usa un modelo más rápido (`gemini-2.0-flash-lite-001`) para bajar la tasa de timeouts.
+- Además reintenta 3 veces antes de dar la rama por perdida.
+- Si igual falla, en la respuesta final ahora vas a ver `fewShot.error` o `zeroShot.error`.
 
 ## 💡 Preguntas guía
 

@@ -1,0 +1,93 @@
+{
+  "info": {
+    "_postman_id": "7bc7fdb5-8e21-44f1-8f09-d3f9d2868f4e",
+    "name": "Clase 5 - Multimodalidad Audio",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "item": [
+    {
+      "name": "Caso base - radiografia + audio",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"patientId\": \"P-5001\",\n  \"imageStudyType\": \"radiografia_torax\",\n  \"imageFindingsText\": \"Opacidad bibasal leve con infiltrado en base derecha y sin derrame pleural.\",\n  \"audioTranscript\": \"Paciente masculino de 68 años con tos, fiebre y disnea progresiva desde hace 48 horas. Saturacion reportada 93 por ciento. Se solicita correlacion clinica y control en menos de 24 horas.\",\n  \"audioLanguage\": \"es\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:5682/webhook/biomedical-multimodal-audio",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "5682",
+          "path": [
+            "webhook",
+            "biomedical-multimodal-audio"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Caso fallback - poco contexto",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"patientId\": \"P-5002\",\n  \"imageStudyType\": \"ecografia\",\n  \"imageFindingsText\": \"Imagen no concluyente.\",\n  \"audioTranscript\": \"Control general.\",\n  \"audioLanguage\": \"es\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:5682/webhook/biomedical-multimodal-audio",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "5682",
+          "path": [
+            "webhook",
+            "biomedical-multimodal-audio"
+          ]
+        }
+      }
+    },
+    {
+      "name": "Caso STT real - audioUrl",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"patientId\": \"P-5003\",\n  \"imageStudyType\": \"radiografia_torax\",\n  \"imageFindingsText\": \"Infiltrado basal derecho y opacidad bibasal leve.\",\n  \"audioUrl\": \"https://assembly.ai/wildfires.mp3\",\n  \"audioLanguage\": \"es\"\n}"
+        },
+        "url": {
+          "raw": "http://localhost:5682/webhook/biomedical-multimodal-audio",
+          "protocol": "http",
+          "host": [
+            "localhost"
+          ],
+          "port": "5682",
+          "path": [
+            "webhook",
+            "biomedical-multimodal-audio"
+          ]
+        }
+      }
+    }
+  ]
+}
