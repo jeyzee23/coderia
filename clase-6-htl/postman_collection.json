@@ -1,0 +1,172 @@
+{
+  "info": {
+    "name": "Clase 6 HTL - Workflow HITL con Bots y Notificaciones",
+    "_postman_id": "7f8ed8ef-d59a-4fb7-9c9f-htl-clase-6",
+    "description": "Coleccion para probar el workflow Human-in-the-Loop de clase 6. Primero ejecutar un caso inicial, copiar el approvalUrl enviado al webhook de notificacion y pegarlo en la variable approval_url para simular aprobacion, edicion o rechazo.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:5684",
+      "type": "string"
+    },
+    {
+      "key": "approval_url",
+      "value": "PEGAR_APPROVAL_URL_GENERADO_POR_N8N",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1 - Crear caso HITL high risk",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"caseId\": \"CASE-HTL-001\",\n  \"patientId\": \"PAC-991\",\n  \"domain\": \"genomica\",\n  \"requestType\": \"validacion_variante\",\n  \"clinicalContext\": \"Paciente con antecedente familiar de cancer de mama temprano. Se detecta variante BRCA1 c.5266dupC.\",\n  \"aiRecommendation\": \"Clasificar como patogenica y solicitar revision por genetista antes de emitir informe.\",\n  \"riskLevel\": \"high\",\n  \"reviewer\": {\n    \"name\": \"Dra. Alvarez\",\n    \"role\": \"genetista_clinica\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/webhook/hitl-review-request",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "webhook",
+            "hitl-review-request"
+          ]
+        },
+        "description": "Dispara el workflow. Ahora responde inmediatamente con status review_requested y approvalUrl. Copiar approvalUrl y pegarlo en la variable approval_url."
+      }
+    },
+    {
+      "name": "2 - Crear caso critical para probar timeout rapido",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"caseId\": \"CASE-HTL-CRITICAL-001\",\n  \"patientId\": \"PAC-992\",\n  \"domain\": \"salud\",\n  \"requestType\": \"aprobacion_tratamiento\",\n  \"clinicalContext\": \"Paciente con indicacion de tratamiento de alto riesgo. Requiere aprobacion profesional antes de continuar.\",\n  \"aiRecommendation\": \"No ejecutar automaticamente. Solicitar aprobacion medica antes de administrar tratamiento.\",\n  \"riskLevel\": \"critical\",\n  \"reviewer\": {\n    \"name\": \"Dr. Supervisor\",\n    \"role\": \"medico_responsable\"\n  }\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/webhook/hitl-review-request",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "webhook",
+            "hitl-review-request"
+          ]
+        },
+        "description": "Caso con timeout de 30 segundos. La respuesta trae approvalUrl, pero no lo uses si queres ver fallback y escalamiento."
+      }
+    },
+    {
+      "name": "3 - Responder approvalUrl - approved",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"decision\": \"approved\",\n  \"reviewerId\": \"rev-gen-01\",\n  \"comments\": \"Apruebo la recomendacion. Requiere firma profesional antes de emitir.\"\n}"
+        },
+        "url": {
+          "raw": "{{approval_url}}",
+          "host": [
+            "{{approval_url}}"
+          ]
+        },
+        "description": "Pegar en la variable approval_url la URL generada por el nodo Wait."
+      }
+    },
+    {
+      "name": "4 - Responder approvalUrl - edited",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"decision\": \"edited\",\n  \"reviewerId\": \"rev-gen-02\",\n  \"comments\": \"La recomendacion es util, pero falta aclarar limitaciones.\",\n  \"editedRecommendation\": \"Clasificacion preliminar compatible con variante patogenica. Emitir solo luego de validacion por genetista clinica.\"\n}"
+        },
+        "url": {
+          "raw": "{{approval_url}}",
+          "host": [
+            "{{approval_url}}"
+          ]
+        },
+        "description": "Simula que el humano no acepta textualmente la salida de IA y corrige el texto final."
+      }
+    },
+    {
+      "name": "5 - Responder approvalUrl - rejected",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"decision\": \"rejected\",\n  \"reviewerId\": \"rev-gen-03\",\n  \"comments\": \"No hay evidencia suficiente para sostener la recomendacion automatica. Requiere revision supervisora.\"\n}"
+        },
+        "url": {
+          "raw": "{{approval_url}}",
+          "host": [
+            "{{approval_url}}"
+          ]
+        },
+        "description": "Simula rechazo humano. El caso no puede continuar y queda marcado como requiere supervisor."
+      }
+    },
+    {
+      "name": "6 - Error esperado por campos faltantes",
+      "request": {
+        "method": "POST",
+        "header": [
+          {
+            "key": "Content-Type",
+            "value": "application/json"
+          }
+        ],
+        "body": {
+          "mode": "raw",
+          "raw": "{\n  \"caseId\": \"CASE-INVALID\"\n}"
+        },
+        "url": {
+          "raw": "{{base_url}}/webhook/hitl-review-request",
+          "host": [
+            "{{base_url}}"
+          ],
+          "path": [
+            "webhook",
+            "hitl-review-request"
+          ]
+        },
+        "description": "Debe devolver HTTP 400 porque faltan patientId y clinicalContext."
+      }
+    }
+  ]
+}

@@ -1,0 +1,526 @@
+{
+  "name": "Clase 6 - HITL Review con bots y fallback",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## Clase 6 - HITL Review\n\nFlujo prolijo de izquierda a derecha:\n\n1. Entrada y validacion\n2. Politica HITL\n3. Notificacion y respuesta inmediata\n4. Wait por aprobacion humana\n5. Cierre o fallback\n6. Metricas finales",
+        "height": 300,
+        "width": 360,
+        "color": 7
+      },
+      "id": "note-intro",
+      "name": "Documentacion",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -520,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "hitl-review-request",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "webhook-new-case",
+      "name": "Webhook nuevo caso",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        -420,
+        260
+      ],
+      "webhookId": "hitl-review-request"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Este nodo recibe el body del Webhook y lo normaliza.\n// En n8n, a veces el payload llega en json.body y otras directo en json.\nconst body = $input.first().json.body || $input.first().json || {};\n\n// Campos minimos para poder operar el flujo HITL.\n// Si falta alguno, no seguimos con la automatizacion.\nconst required = ['caseId', 'patientId', 'clinicalContext'];\nconst missing = required.filter((field) => !body[field]);\n\nif (missing.length > 0) {\n  return [{\n    json: {\n      valid: false,\n      statusCode: 400,\n      error: 'Faltan campos obligatorios: ' + missing.join(', ')\n    }\n  }];\n}\n\n// Hash simple para no arrastrar patientId en claro por logs y notificaciones.\n// Es suficiente para clase; en produccion usar una estrategia de desidentificacion formal.\nconst hashId = (id) => {\n  let h = 0;\n  const value = String(id);\n  for (let i = 0; i < value.length; i++) {\n    h = ((h << 5) - h) + value.charCodeAt(i);\n    h |= 0;\n  }\n  return 'hash_' + Math.abs(h).toString(36);\n};\n\n// Salida canonica para que todos los nodos siguientes trabajen con el mismo contrato.\nreturn [{\n  json: {\n    valid: true,\n    caseId: String(body.caseId),\n    patientHash: hashId(body.patientId),\n    domain: body.domain || 'salud',\n    requestType: body.requestType || 'revision_clinica',\n    clinicalContext: String(body.clinicalContext).trim(),\n    aiRecommendation: String(body.aiRecommendation || '').trim(),\n    riskLevel: String(body.riskLevel || 'medium').toLowerCase(),\n    reviewer: body.reviewer || { name: 'Revisor asignado', role: 'especialista' },\n    startedAtMs: Date.now()\n  }\n}];"
+      },
+      "id": "code-validate",
+      "name": "Validar y anonimizar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -120,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "valid-input",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-valid",
+      "name": "Input valido?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        180,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { error: $json.error, statusCode: 400 } }}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-error",
+      "name": "Responder error",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        480,
+        480
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\n\n// Tabla de politicas para la demo.\n// Usamos segundos para poder mostrar timeout en clase sin esperar minutos.\nconst policies = {\n  critical: { score: 0.95, timeoutSeconds: 30 },\n  high: { score: 0.82, timeoutSeconds: 60 },\n  medium: { score: 0.62, timeoutSeconds: 120 },\n  low: { score: 0.35, timeoutSeconds: 180 }\n};\n\n// Si llega un riskLevel desconocido, usamos medium como default conservador.\nconst policy = policies[d.riskLevel] || policies.medium;\n\n// Simulamos una deteccion de sensibilidad buscando terminos de riesgo.\n// Esto representa lo que en produccion podria decidir un modelo o un motor de reglas.\nconst text = (d.clinicalContext + ' ' + d.aiRecommendation).toLowerCase();\nconst sensitiveTerms = ['brca', 'patogenica', 'tratamiento', 'quimioterapia', 'diagnostico', 'critico', 'variante'];\nconst matchedSensitiveTerms = sensitiveTerms.filter((term) => text.includes(term));\n\n// Pedimos revision humana si el score es medio/alto o si aparecen terminos sensibles.\nconst requiresHumanReview = policy.score >= 0.6 || matchedSensitiveTerms.length > 0;\n\n// Si el caller no mando recomendacion, generamos una recomendacion conservadora.\nconst recommendation = d.aiRecommendation || (\n  requiresHumanReview\n    ? 'La IA detecto un caso sensible. Requiere revision humana antes de continuar.'\n    : 'Caso de bajo riesgo. Registrar trazabilidad y continuar con controles habituales.'\n);\n\n// Dejamos separadas la evaluacion de IA y la politica HITL para que sea auditable.\nreturn [{\n  json: {\n    ...d,\n    aiAssessment: {\n      model: 'simulated-hitl-policy-v1',\n      recommendation,\n      riskScore: policy.score,\n      confidence: matchedSensitiveTerms.length > 0 ? 0.78 : 0.58,\n      matchedSensitiveTerms\n    },\n    hitlPolicy: {\n      requiresHumanReview,\n      interventionPoint: 'antes_de_emitir_recomendacion_final',\n      timeoutSeconds: policy.timeoutSeconds,\n      fallbackAction: 'escalar_a_supervisor',\n      autoApproveAllowed: false\n    }\n  }\n}];"
+      },
+      "id": "code-policy",
+      "name": "Preparar politica HITL",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        480,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## Punto HITL\n\nLa intervencion humana ocurre antes de emitir la recomendacion final.\n\nLa IA propone, pero no aprueba sola.",
+        "height": 220,
+        "width": 320,
+        "color": 4
+      },
+      "id": "note-hitl-point",
+      "name": "Nota punto HITL",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        980,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.NOTIFICATION_WEBHOOK_URL || 'https://postman-echo.com/post' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ (() => {\n  const resumeUrl = $execution.resumeUrl;\n  const approvalUrl = resumeUrl.includes('?')\n    ? resumeUrl.replace('?', '/decision?')\n    : resumeUrl + '/decision';\n\n  return JSON.stringify({\n    event: 'human_review_requested',\n    caseId: $json.caseId,\n    patientHash: $json.patientHash,\n    domain: $json.domain,\n    requestType: $json.requestType,\n    reviewer: $json.reviewer,\n    riskLevel: $json.riskLevel,\n    riskScore: $json.aiAssessment.riskScore,\n    recommendation: $json.aiAssessment.recommendation,\n    timeoutSeconds: $json.hitlPolicy.timeoutSeconds,\n    approvalUrl,\n    method: 'POST',\n    expectedBody: {\n      decision: 'approved | edited | rejected',\n      reviewerId: 'string',\n      comments: 'string',\n      editedRecommendation: 'string opcional'\n    }\n  });\n})() }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "http-notify-reviewer",
+      "name": "Notificar revisor",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        780,
+        260
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 2000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "resume": "webhook",
+        "httpMethod": "POST",
+        "responseCode": 200,
+        "responseMode": "onReceived",
+        "responseData": "firstEntryJson",
+        "limitWaitTime": true,
+        "limitType": "afterTimeInterval",
+        "resumeAmount": "={{ $('Preparar politica HITL').first().json.hitlPolicy.timeoutSeconds }}",
+        "resumeUnit": "seconds",
+        "options": {
+          "webhookSuffix": "decision"
+        }
+      },
+      "id": "wait-human-decision",
+      "name": "Esperar decision humana",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1680,
+        260
+      ],
+      "webhookId": "wait-hitl-decision"
+    },
+    {
+      "parameters": {
+        "content": "## Wait por webhook\n\nEl approvalUrl correcto incluye el suffix `/decision`.\n\nFormato:\n`/webhook-waiting/{id}/decision?signature=...`",
+        "height": 240,
+        "width": 360,
+        "color": 3
+      },
+      "id": "note-wait",
+      "name": "Nota Wait",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        2100,
+        -180
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Recuperamos el caso original desde el nodo de politica.\n// El Wait devuelve solamente lo que llega al webhook de aprobacion.\nconst original = $('Preparar politica HITL').first().json;\nconst current = $input.first().json || {};\nconst body = current.body || current;\n\n// Solo aceptamos decisiones conocidas.\n// Si no llega ninguna, interpretamos que el Wait vencio por timeout.\nconst allowed = ['approved', 'edited', 'rejected'];\nconst decision = String(body.decision || '').toLowerCase();\nconst received = allowed.includes(decision);\n\n// Si el humano edita, usamos su version como recomendacion final.\n// Si aprueba o rechaza, conservamos la recomendacion original de la IA.\nconst finalRecommendation = decision === 'edited'\n  ? String(body.editedRecommendation || original.aiAssessment.recommendation)\n  : original.aiAssessment.recommendation;\n\n// Solo approved y edited permiten continuar.\nconst canProceed = decision === 'approved' || decision === 'edited';\n\nreturn [{\n  json: {\n    ...original,\n    humanReview: {\n      received,\n      decision: received ? decision : 'timeout',\n      reviewerId: body.reviewerId || null,\n      comments: body.comments || '',\n      editedRecommendation: body.editedRecommendation || '',\n      reviewedAt: received ? new Date().toISOString() : null\n    },\n    finalDecision: {\n      status: received ? decision : 'pending_supervisor_review',\n      recommendation: received ? finalRecommendation : 'No emitir resultado. Caso pendiente de supervisor por timeout.',\n      canProceed,\n      requiresSupervisor: !received || decision === 'rejected'\n    }\n  }\n}];"
+      },
+      "id": "code-parse-human",
+      "name": "Parsear decision humana",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1980,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "id": "human-received",
+              "leftValue": "={{ $json.humanReview.received }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-human-received",
+      "name": "Decision recibida?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        2280,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\n\n// Esta rama se ejecuta cuando hubo respuesta humana.\n// No la marcamos como fallback aunque el humano haya rechazado.\nreturn [{\n  json: {\n    ...d,\n    fallbackUsed: false,\n    escalation: {\n      // Si el humano rechaza, el caso queda para supervisor por discrepancia.\n      escalated: d.finalDecision.requiresSupervisor,\n      reason: d.humanReview.decision === 'rejected' ? 'human_rejected_ai_recommendation' : null,\n      nextRole: d.humanReview.decision === 'rejected' ? 'supervisor_clinico' : null,\n      action: d.humanReview.decision === 'rejected' ? 'revisar_discrepancia' : 'continuar_con_trazabilidad'\n    }\n  }\n}];"
+      },
+      "id": "code-human-close",
+      "name": "Cierre decision humana",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2580,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.SUPERVISOR_WEBHOOK_URL || $env.NOTIFICATION_WEBHOOK_URL || 'https://postman-echo.com/post' }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({\n  event: 'human_review_timeout_escalated',\n  caseId: $json.caseId,\n  patientHash: $json.patientHash,\n  riskLevel: $json.riskLevel,\n  timeoutSeconds: $json.hitlPolicy.timeoutSeconds,\n  previousReviewer: $json.reviewer,\n  blockedRecommendation: $json.aiAssessment.recommendation,\n  actionRequired: 'supervisor_review_required',\n  ts: new Date().toISOString()\n}) }}",
+        "options": {
+          "timeout": 5000
+        }
+      },
+      "id": "http-escalate",
+      "name": "Escalar a supervisor",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2580,
+        420
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 3000,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Esta rama se usa cuando el Wait vencio y no hubo decision humana.\nconst d = $('Parsear decision humana').first().json;\n\n// Regla clave HITL: timeout no significa aprobacion automatica.\n// Se bloquea la emision y se escala a supervisor.\nreturn [{\n  json: {\n    ...d,\n    fallbackUsed: true,\n    escalation: {\n      escalated: true,\n      reason: 'human_review_timeout',\n      nextRole: 'supervisor_clinico',\n      action: 'bloquear_emision_y_requerir_revision_supervisora'\n    },\n    finalDecision: {\n      status: 'pending_supervisor_review',\n      recommendation: 'No emitir resultado automaticamente. Se escalo a supervisor por falta de respuesta humana.',\n      canProceed: false,\n      requiresSupervisor: true\n    }\n  }\n}];"
+      },
+      "id": "code-safe-fallback",
+      "name": "Fallback seguro",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2880,
+        420
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const d = $input.first().json;\nconst now = Date.now();\n\n// Latencia total desde que entro el caso al webhook inicial.\nconst latencyMs = d.startedAtMs ? now - d.startedAtMs : null;\n\n// Si hubo revision humana, calculamos cuanto tardo en responder.\nconst reviewedAtMs = d.humanReview.reviewedAt ? new Date(d.humanReview.reviewedAt).getTime() : null;\nconst humanResponseMs = reviewedAtMs && d.startedAtMs ? reviewedAtMs - d.startedAtMs : null;\n\n// Metricas operativas para dashboard o analisis posterior.\nconst metrics = {\n  latencyMs,\n  humanResponseMs,\n  timeoutSeconds: d.hitlPolicy.timeoutSeconds,\n  riskScore: d.aiAssessment.riskScore,\n  aiConfidence: d.aiAssessment.confidence,\n  fallbackUsed: d.fallbackUsed === true,\n  escalated: d.escalation?.escalated === true,\n  canProceed: d.finalDecision.canProceed === true\n};\n\n// Log estructurado: un evento por ejecucion completada.\nconst log = {\n  event: 'hitl_review_completed',\n  ts: new Date(now).toISOString(),\n  caseId: d.caseId,\n  patientHash: d.patientHash,\n  domain: d.domain,\n  requestType: d.requestType,\n  riskLevel: d.riskLevel,\n  reviewerRole: d.reviewer.role,\n  humanDecision: d.humanReview.decision,\n  fallbackUsed: metrics.fallbackUsed,\n  escalated: metrics.escalated,\n  latencyMs,\n  humanResponseMs,\n  timeoutSeconds: d.hitlPolicy.timeoutSeconds\n};\n\n// Respuesta final pensada para ser facil de leer en Postman y en clase.\nreturn [{\n  json: {\n    caseId: d.caseId,\n    patientHash: d.patientHash,\n    workflow: {\n      pattern: 'human-in-the-loop',\n      interventionPoint: d.hitlPolicy.interventionPoint,\n      autoApproveAllowed: d.hitlPolicy.autoApproveAllowed\n    },\n    aiAssessment: d.aiAssessment,\n    humanReview: d.humanReview,\n    finalDecision: d.finalDecision,\n    escalation: d.escalation,\n    metrics,\n    log\n  }\n}];"
+      },
+      "id": "code-final-response",
+      "name": "Armar respuesta final",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3180,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {
+          "responseCode": 202
+        }
+      },
+      "id": "respond-review-requested",
+      "name": "Responder review requested",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1380,
+        260
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Este nodo arma la respuesta inmediata del webhook inicial.\n// Es necesario porque el HTTP Request de notificacion cambia el $json.\nconst d = $('Preparar politica HITL').first().json;\n\n// El Wait tiene Webhook Suffix = \"decision\".\n// Por eso la URL usable debe ser /webhook-waiting/{id}/decision?signature=...\nconst resumeUrl = $execution.resumeUrl;\nconst approvalUrl = resumeUrl.includes('?')\n  ? resumeUrl.replace('?', '/decision?')\n  : resumeUrl + '/decision';\n\n// El alumno copia approvalUrl desde esta respuesta y la usa para aprobar, editar o rechazar.\nreturn [{\n  json: {\n    status: 'review_requested',\n    message: 'Caso recibido. El workflow queda esperando decision humana.',\n    caseId: d.caseId,\n    patientHash: d.patientHash,\n    approvalUrl,\n    approvalMethod: 'POST',\n    timeoutSeconds: d.hitlPolicy.timeoutSeconds,\n    expectedBody: {\n      decision: 'approved | edited | rejected',\n      reviewerId: 'string',\n      comments: 'string',\n      editedRecommendation: 'string opcional'\n    }\n  }\n}];"
+      },
+      "id": "code-review-response",
+      "name": "Preparar respuesta review requested",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1080,
+        260
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook nuevo caso": {
+      "main": [
+        [
+          {
+            "node": "Validar y anonimizar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validar y anonimizar": {
+      "main": [
+        [
+          {
+            "node": "Input valido?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Input valido?": {
+      "main": [
+        [
+          {
+            "node": "Preparar politica HITL",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Responder error",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar politica HITL": {
+      "main": [
+        [
+          {
+            "node": "Notificar revisor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notificar revisor": {
+      "main": [
+        [
+          {
+            "node": "Preparar respuesta review requested",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Esperar decision humana": {
+      "main": [
+        [
+          {
+            "node": "Parsear decision humana",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parsear decision humana": {
+      "main": [
+        [
+          {
+            "node": "Decision recibida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decision recibida?": {
+      "main": [
+        [
+          {
+            "node": "Cierre decision humana",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Escalar a supervisor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cierre decision humana": {
+      "main": [
+        [
+          {
+            "node": "Armar respuesta final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escalar a supervisor": {
+      "main": [
+        [
+          {
+            "node": "Fallback seguro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fallback seguro": {
+      "main": [
+        [
+          {
+            "node": "Armar respuesta final",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Armar respuesta final": {
+      "main": [
+        []
+      ]
+    },
+    "Responder review requested": {
+      "main": [
+        [
+          {
+            "node": "Esperar decision humana",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar respuesta review requested": {
+      "main": [
+        [
+          {
+            "node": "Responder review requested",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "tags": [
+    {
+      "name": "clase-6"
+    },
+    {
+      "name": "hitl"
+    }
+  ]
+}

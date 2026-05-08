@@ -1,0 +1,31 @@
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n-dev-c6-htl
+    restart: unless-stopped
+    ports:
+      - "5684:5678"
+    environment:
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5684/
+      - N8N_EDITOR_BASE_URL=http://localhost:5684/
+      - GENERIC_TIMEZONE=America/Argentina/Buenos_Aires
+      - TZ=America/Argentina/Buenos_Aires
+      - N8N_ENCRYPTION_KEY=6e5fd23a9a78739f9ce55f8b9037afe4796914ce71d9328acf92d9217d0df72c
+      - N8N_SECURE_COOKIE=false
+      - N8N_DIAGNOSTICS_ENABLED=false
+      - N8N_RUNNERS_ENABLED=true
+      - N8N_BLOCK_ENV_ACCESS_IN_NODE=false
+      - DB_TYPE=sqlite
+      - EXECUTIONS_DATA_PRUNE=true
+      - EXECUTIONS_DATA_MAX_AGE=168
+      - NOTIFICATION_WEBHOOK_URL=${NOTIFICATION_WEBHOOK_URL}
+      - SUPERVISOR_WEBHOOK_URL=${SUPERVISOR_WEBHOOK_URL}
+      - REVIEW_BASE_URL=${REVIEW_BASE_URL}
+    volumes:
+      - n8n_data_c6_htl:/home/node/.n8n
+
+volumes:
+  n8n_data_c6_htl:
